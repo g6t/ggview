@@ -31,17 +31,17 @@ plots_reserved <- c("width", "height")
 #' @examples
 #' library(ggplot2)
 #'
-#' # A customizer that recolours a plot, offering one colour per level.
-#' recolour <- customizer(
-#'   apply = function(plot, colours = NULL) {
-#'     if (is.null(colours)) return(plot)
-#'     suppressMessages(plot + scale_fill_manual(values = unlist(colours)))
+#' # A customizer that recolors a plot, offering one color per level.
+#' recolor <- customizer(
+#'   apply = function(plot, colors = NULL) {
+#'     if (is.null(colors)) return(plot)
+#'     suppressMessages(plot + scale_fill_manual(values = unlist(colors)))
 #'   },
 #'   params = function(plot) {
-#'     list(colours = param_mapping("Colours", keys = c("a", "b"), to = "colour"))
+#'     list(colors = param_mapping("Colors", keys = c("a", "b"), to = "color"))
 #'   }
 #' )
-#' recolour
+#' recolor
 #'
 #' @export
 customizer <- function(apply, params) {
@@ -109,7 +109,7 @@ params_labels <- function(plot) {
 #' @title Parameters a customizer offers
 #' @description The kinds of parameter a [customizer()] can offer, one function
 #'   per kind. A program reads the kind from [plots_params()] and shows the
-#'   control that fits it: a box for text, a picker for a colour, a list for a
+#'   control that fits it: a box for text, a picker for a color, a list for a
 #'   choice, one row per key for a mapping.
 #'
 #'   Every parameter carries a `default`, which is what the plot does without
@@ -121,7 +121,7 @@ params_labels <- function(plot) {
 #'   `param_choices()`.
 #' @param keys The things being mapped, for `param_mapping()` — the levels of a
 #'   plot's fill, say. Read them off the plot.
-#' @param to What each key maps to: `"colour"`, `"text"` or `"number"`.
+#' @param to What each key maps to: `"color"`, `"text"` or `"number"`.
 #' @param min,max,step Bounds and increment for `param_number()`. Optional.
 #'
 #' @return A parameter.
@@ -133,7 +133,7 @@ params_labels <- function(plot) {
 #' param_number("Text size", default = 11, min = 6, max = 40)
 #' param_choice("Legend", choices = c("right", "bottom", "none"))
 #' param_choices("Brands to show", choices = c("Ours", "Rival A", "Rival B"))
-#' param_mapping("Colours", keys = c("Ours", "Rival A"), to = "colour")
+#' param_mapping("Colors", keys = c("Ours", "Rival A"), to = "color")
 #'
 #' @name param
 NULL
@@ -176,13 +176,13 @@ param_choices <- function(label, choices, default = NULL) {
 
 #' @rdname param
 #' @export
-param_colour <- function(label, default = NULL) {
-  new_param("colour", label, default)
+param_color <- function(label, default = NULL) {
+  new_param("color", label, default)
 }
 
 #' @rdname param
 #' @export
-param_mapping <- function(label, keys, to = c("colour", "text", "number"),
+param_mapping <- function(label, keys, to = c("color", "text", "number"),
                           default = NULL) {
   # `to` rather than `value_type`, so that `param$value` on an untouched
   # parameter cannot partial-match its way to the wrong answer.
@@ -235,7 +235,7 @@ param_check <- function(param, value, key, call = parent.frame()) {
       if (!is.null(param$max) && value > param$max) bad(cli::format_inline("at most {param$max}"))
     },
     flag = if (!is.logical(value) || length(value) != 1L) bad(cli::format_inline("{.code TRUE} or {.code FALSE}")),
-    colour = if (!is_colour(value)) bad(cli::format_inline("a colour, such as {.val #36c8ef}")),
+    color = if (!is_color(value)) bad(cli::format_inline("a color, such as {.val #36c8ef}")),
     choice = {
       if (!is.character(value) || length(value) != 1L) bad("a single string")
       if (!value %in% param$choices) {
@@ -256,7 +256,7 @@ param_check <- function(param, value, key, call = parent.frame()) {
       if (length(unknown)) bad(cli::format_inline("named after {.val {param$keys}}"))
       ok <- switch(
         param$to,
-        colour = vapply(value, is_colour, logical(1)),
+        color = vapply(value, is_color, logical(1)),
         number = vapply(value, function(v) is.numeric(v) && length(v) == 1L, logical(1)),
         vapply(value, function(v) is.character(v) && length(v) == 1L, logical(1))
       )
@@ -267,7 +267,7 @@ param_check <- function(param, value, key, call = parent.frame()) {
   value
 }
 
-is_colour <- function(x) {
+is_color <- function(x) {
   if (!is.character(x) || length(x) != 1L || is.na(x)) return(FALSE)
   !inherits(try(grDevices::col2rgb(x), silent = TRUE), "try-error")
 }

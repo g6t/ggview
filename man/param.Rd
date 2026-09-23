@@ -7,7 +7,7 @@
 \alias{param_flag}
 \alias{param_choice}
 \alias{param_choices}
-\alias{param_colour}
+\alias{param_color}
 \alias{param_mapping}
 \title{Parameters a customizer offers}
 \usage{
@@ -21,9 +21,9 @@ param_choice(label, choices, default = NULL)
 
 param_choices(label, choices, default = NULL)
 
-param_colour(label, default = NULL)
+param_color(label, default = NULL)
 
-param_mapping(label, keys, to = c("colour", "text", "number"), default = NULL)
+param_mapping(label, keys, to = c("color", "text", "number"), default = NULL)
 }
 \arguments{
 \item{label}{What to call the parameter, for a person reading it.}
@@ -38,7 +38,7 @@ param_mapping(label, keys, to = c("colour", "text", "number"), default = NULL)
 \item{keys}{The things being mapped, for \code{param_mapping()} — the levels of a
 plot's fill, say. Read them off the plot.}
 
-\item{to}{What each key maps to: \code{"colour"}, \code{"text"} or \code{"number"}.}
+\item{to}{What each key maps to: \code{"color"}, \code{"text"} or \code{"number"}.}
 }
 \value{
 A parameter.
@@ -46,7 +46,7 @@ A parameter.
 \description{
 The kinds of parameter a \code{\link[=customizer]{customizer()}} can offer, one function
 per kind. A program reads the kind from \code{\link[=plots_params]{plots_params()}} and shows the
-control that fits it: a box for text, a picker for a colour, a list for a
+control that fits it: a box for text, a picker for a color, a list for a
 choice, one row per key for a mapping.
 
 Every parameter carries a \code{default}, which is what the plot does without
@@ -57,7 +57,7 @@ param_text("Title", default = "Brand funnel")
 param_number("Text size", default = 11, min = 6, max = 40)
 param_choice("Legend", choices = c("right", "bottom", "none"))
 param_choices("Brands to show", choices = c("Ours", "Rival A", "Rival B"))
-param_mapping("Colours", keys = c("Ours", "Rival A"), to = "colour")
+param_mapping("Colors", keys = c("Ours", "Rival A"), to = "color")
 
 }
 \seealso{

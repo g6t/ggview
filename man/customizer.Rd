@@ -35,17 +35,17 @@ what it can offer is not limited to what \code{ggplot2} lets you add on top.
 \examples{
 library(ggplot2)
 
-# A customizer that recolours a plot, offering one colour per level.
-recolour <- customizer(
-  apply = function(plot, colours = NULL) {
-    if (is.null(colours)) return(plot)
-    suppressMessages(plot + scale_fill_manual(values = unlist(colours)))
+# A customizer that recolors a plot, offering one color per level.
+recolor <- customizer(
+  apply = function(plot, colors = NULL) {
+    if (is.null(colors)) return(plot)
+    suppressMessages(plot + scale_fill_manual(values = unlist(colors)))
   },
   params = function(plot) {
-    list(colours = param_mapping("Colours", keys = c("a", "b"), to = "colour"))
+    list(colors = param_mapping("Colors", keys = c("a", "b"), to = "color"))
   }
 )
-recolour
+recolor
 
 }
 \seealso{

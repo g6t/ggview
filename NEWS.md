@@ -14,7 +14,7 @@
   somewhere else.
 * Added `plots_params()`, which says what one plot accepts: the kind of each
   parameter, its default, and what it was changed to. With the `param_*()`
-  functions — text, number, flag, colour, choice, choices and mapping — that is
+  functions — text, number, flag, color, choice, choices and mapping — that is
   enough for a program to build a control for each parameter without knowing
   anything about plots.
 * Added `save_plots()` to write a whole collection, `as.list()` to get it as a
@@ -23,7 +23,7 @@
 * Printing a plot that has a `canvas()` no longer fails where there is no
   viewer. It draws the ordinary way instead, so a plot can be printed while
   knitting, in a plain console and under `Rscript`. The canvas cannot be
-  honoured there, and `save_ggplot()` still uses it.
+  honored there, and `save_ggplot()` still uses it.
 * `plots_append()` and `plots_set()` preview the plot they touched whenever the
   session is interactive and the RStudio viewer is there, so tuning a plot shows
   the result. `show = FALSE` turns it off for a run of several.

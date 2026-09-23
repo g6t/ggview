@@ -33,9 +33,9 @@ library(tibble)
 plot's key, and slashes in it make folders later on.
 
 ```{r}
-weight <- ggplot(mtcars, aes(wt, mpg)) +
-  geom_point() +
-  labs(title = "Heavier cars use more fuel", subtitle = "N = 32")
+weight <- ggplot(mtcars, aes(wt, mpg, color = factor(cyl))) +
+  geom_point(size = 2) +
+  labs(title = "Heavier cars use more fuel", subtitle = "N = 32", color = "Cylinders")
 
 cylinders <- ggplot(mtcars, aes(factor(cyl))) +
   geom_bar() +
@@ -117,36 +117,38 @@ A change is checked before it is stored, so a typo fails where you made it
 rather than when the plot is drawn:
 
 ```{r, error = TRUE}
-plots_set(plots, "Engine/weight", colour = "red")
+plots_set(plots, "Engine/weight", color = "red")
 ```
 
-## Writing a customizer
+## Going further than the default
 
-`customizer_default()` offers the labels every plot has. Anything beyond that is
-particular to the plot, so you say what it is.
+`customizer_default()` offers the labels every plot has, and that is all it
+claims to know. The plot above colors its points by cylinder count, and nothing
+in that list lets anyone change those colors — the default cannot see them.
 
-A customizer is two functions. `apply` takes the stored plot and the changed
-values and returns a new plot. `params` takes the stored plot and says what may
-be changed, using the `param_*()` functions. Keeping them together is what lets
-a program offer the right control for each parameter without knowing anything
-about plots.
+So say what this plot allows. A customizer is two functions. `apply` takes the
+stored plot and the changed values and returns a new plot. `params` takes the
+stored plot and says what may be changed, using the `param_*()` functions.
+Keeping them together is what lets a program offer the right control for each
+parameter without knowing anything about plots.
 
 ```{r}
-recolour <- customizer(
-  apply = function(plot, title = NULL, colours = NULL) {
+recolor <- customizer(
+  apply = function(plot, title = NULL, colors = NULL) {
     if (!is.null(title)) plot <- plot + labs(title = title)
-    if (!is.null(colours)) {
-      plot <- suppressMessages(plot + scale_fill_manual(values = unlist(colours)))
+    if (!is.null(colors)) {
+      plot <- suppressMessages(plot + scale_color_manual(values = unlist(colors)))
     }
     plot
   },
   params = function(plot) {
-    # Ask the plot what it is actually filling by, rather than assuming.
+    # Ask the plot what it colors by, rather than assuming. ggplot2 registers the
+    # aesthetic as `colour` however you spell it in `aes()`.
     built <- suppressMessages(ggplot_build(plot))
-    levels <- built$plot$scales$get_scales("fill")$range$range
+    levels <- built$plot$scales$get_scales("colour")$range$range
     list(
-      title   = param_text("Title", default = plot$labels$title),
-      colours = param_mapping("Colours", keys = levels, to = "colour")
+      title  = param_text("Title", default = plot$labels$title),
+      colors = param_mapping("Colors", keys = levels, to = "color")
     )
   }
 )
@@ -158,18 +160,28 @@ rebuild a plot rather than add to it, so a customizer is not limited to what
 `ggplot2` lets you add on top — filtering categories or reordering them is
 possible here, and impossible with a layer.
 
-```{r}
-drive <- ggplot(mpg, aes(class, fill = drv)) + geom_bar() + labs(title = "Classes")
-
-plots <- plots_append(plots, drive, name = "Cars/classes", type = "bar",
-                      customizer = recolour)
-plots_params(plots, "Cars/classes")
-```
+Give the same plot the new customizer by adding it again under the same name. It
+keeps its place and its id, and re-adding re-declares the plot, so it starts with
+no changes recorded.
 
 ```{r}
-plots <- plots_set(plots, "Cars/classes",
-                   colours = c("4" = "#36c8ef", "f" = "#50bd90", "r" = "#de425b"))
+plots <- plots_append(plots, weight, name = "Engine/weight", type = "point",
+                      customizer = recolor)
+
+plots_params(plots, "Engine/weight")
 ```
+
+Four parameters where there were eight — this customizer offers a title and not
+the rest of the labels — but one of them is a color per cylinder count, which the
+default could never reach.
+
+```{r, fig.width = 7, fig.height = 4}
+plots <- plots_set(plots, "Engine/weight",
+                   colors = c("4" = "#36c8ef", "6" = "#50bd90", "8" = "#de425b"))
+
+plots_get(plots, "Engine/weight")
+```
+
 
 A customizer must survive being read back somewhere else, so it may not reach
 for anything that only exists in the session that wrote it:
@@ -195,13 +207,13 @@ user interface is built from. `type` decides the control.
 | `text` | one string | a box |
 | `number` | one number, with optional `min`, `max`, `step` | a spinner |
 | `flag` | `TRUE` or `FALSE` | a switch |
-| `colour` | one colour | a picker |
+| `color` | one color | a picker |
 | `choice` | one of `choices` | a list |
 | `choices` | several of `choices` | a multiple list |
 | `mapping` | a named value per key in `keys`, of the type it maps `to` | one control per key |
 
 ```{r}
-str(plots_params(plots, "Cars/classes")$colours)
+str(plots_params(plots, "Engine/weight")$colors)
 ```
 
 `default` is what the plot does on its own, `value` is what somebody changed it
@@ -261,7 +273,7 @@ saveRDS(plots, file)
 
 back <- readRDS(file)
 str(plots_meta(back))
-plots_get(back, "Engine/weight")$labels$caption
+plots_params(back, "Engine/weight")$colors$value
 ```
 
 One thing is worth knowing before storing a large collection. A ggplot keeps the

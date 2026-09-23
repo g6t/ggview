@@ -134,7 +134,7 @@ test_that("setting records a change and leaves the rest alone", {
   twice <- plots_set(changed, "Module 1/first", subtitle = "S")
   expect_named(twice$values[[1]], c("title", "caption", "legend", "subtitle"))
 
-  expect_error(plots_set(plots, "Module 1/first", colour = "red"), "no parameter")
+  expect_error(plots_set(plots, "Module 1/first", color = "red"), "no parameter")
   expect_error(plots_set(plots, "Module 1/first", legend = "sideways"), "must be one of")
   expect_error(plots_set(plots, "Module 1/first", title = 1), "single string")
   expect_error(plots_set(plots, "nope", title = "T"), "No plot with name")
@@ -240,27 +240,27 @@ test_that("a customizer may not take over the canvas", {
 })
 
 test_that("a custom customizer runs, and is checked", {
-  recolour <- customizer(
-    apply = function(plot, colours = NULL) {
-      if (is.null(colours)) return(plot)
-      suppressMessages(plot + ggplot2::scale_colour_manual(values = unlist(colours)))
+  recolor <- customizer(
+    apply = function(plot, colors = NULL) {
+      if (is.null(colors)) return(plot)
+      suppressMessages(plot + ggplot2::scale_color_manual(values = unlist(colors)))
     },
     params = function(plot) {
-      list(colours = param_mapping("Colours", keys = c("4", "6", "8"), to = "colour"))
+      list(colors = param_mapping("Colors", keys = c("4", "6", "8"), to = "color"))
     }
   )
-  dots <- ggplot2::ggplot(mtcars, ggplot2::aes(wt, mpg, colour = factor(cyl))) +
+  dots <- ggplot2::ggplot(mtcars, ggplot2::aes(wt, mpg, color = factor(cyl))) +
     ggplot2::geom_point()
 
-  plots <- quietly(plots_append(plots_init(customizer = recolour), dots,
+  plots <- quietly(plots_append(plots_init(customizer = recolor), dots,
                                 name = "dots", show = FALSE))
-  expect_equal(names(plots_params(plots, "dots")), c("colours", "width", "height"))
+  expect_equal(names(plots_params(plots, "dots")), c("colors", "width", "height"))
 
-  plots <- plots_set(plots, "dots", colours = c("4" = "#36c8ef"))
+  plots <- plots_set(plots, "dots", colors = c("4" = "#36c8ef"))
   expect_s3_class(plots_pull(plots, 1), "ggplot")
 
-  expect_error(plots_set(plots, "dots", colours = c("9" = "#36c8ef")), "named after")
-  expect_error(plots_set(plots, "dots", colours = c("4" = "not a colour")), "mapping to colour")
+  expect_error(plots_set(plots, "dots", colors = c("9" = "#36c8ef")), "named after")
+  expect_error(plots_set(plots, "dots", colors = c("4" = "not a color")), "mapping to color")
 
   # A customizer that returns something else is caught at render time.
   broken <- customizer(function(plot, a = NULL) "not a plot", function(plot) {
@@ -276,15 +276,15 @@ test_that("each kind of parameter checks its value", {
   expect_error(param_check(param_number("N", min = 2), 1, "k"), "at least")
   expect_error(param_check(param_number("N", max = 2), 3, "k"), "at most")
   expect_error(param_check(param_flag("F"), "yes", "k"), "TRUE")
-  expect_error(param_check(param_colour("C"), "nope", "k"), "colour")
+  expect_error(param_check(param_color("C"), "nope", "k"), "color")
   expect_error(param_check(param_choice("C", c("a")), "b", "k"), "one of")
   expect_error(param_check(param_choices("C", c("a")), c("a", "b"), "k"), "chosen from")
   expect_error(param_check(param_mapping("M", "a"), "b", "k"), "named vector")
 
   expect_equal(param_check(param_text("T"), NA, "k"), NA)
   expect_null(param_check(param_text("T"), NULL, "k"))
-  expect_equal(param_check(param_colour("C"), "#36c8ef", "k"), "#36c8ef")
-  expect_equal(param_check(param_colour("C"), "red", "k"), "red")
+  expect_equal(param_check(param_color("C"), "#36c8ef", "k"), "#36c8ef")
+  expect_equal(param_check(param_color("C"), "red", "k"), "red")
   expect_error(param_number("N", min = "low"), "single number")
   expect_error(param_choice("C", 1), "character vector")
 })
@@ -365,7 +365,7 @@ test_that("a collection survives a save and a read", {
 
 test_that("a plot prints without a viewer instead of stopping", {
   # Knitting, a plain console and Rscript all have no viewer. The canvas cannot
-  # be honoured there, but the plot must still draw.
+  # be honored there, but the plot must still draw.
   file <- tempfile(fileext = ".png")
   grDevices::png(file)
   on.exit(grDevices::dev.off(), add = TRUE)

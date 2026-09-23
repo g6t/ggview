@@ -78,7 +78,7 @@ print.plots_tbl <- function(x, n = Inf, ...) {
 }
 
 # One line per plot, with a heading wherever the folder changes. Cells are
-# padded as plain text and coloured afterwards, so the columns stay aligned.
+# padded as plain text and colored afterwards, so the columns stay aligned.
 plots_lines <- function(x, folders) {
   leaf <- plots_leaf(x$name)
   type <- ifelse(is.na(x$type), "", x$type)
