@@ -122,8 +122,9 @@ plots_append <- function(plots, plot, name, type = NA_character_,
   check_customizer(customizer)
 
   size <- plots_dims_lookup(meta$dims, type)
-  width <- width %||% plot$canvas$width %||% size$width
-  height <- height %||% plot$canvas$height %||% size$height
+  on_plot <- canvas_inches(plot$canvas)
+  width <- width %||% on_plot$width %||% size$width
+  height <- height %||% on_plot$height %||% size$height
 
   values <- check_values(list(...), customizer, plot)
 
@@ -154,7 +155,7 @@ plots_append <- function(plots, plot, name, type = NA_character_,
 
   n <- nrow(out)
   cli::cli_alert_success(
-    "{verb} {.val {name}} \u2014 {plots_describe(row)}. {n} plot{?s} in the collection."
+    "{verb} {.val {name}} \u2014 {plots_describe(row$type, row$width, row$height)}. {n} plot{?s} in the collection."
   )
 
   if (isTRUE(show)) print(plots_pull(out, match(name, out$name)))
@@ -193,7 +194,10 @@ plots_append <- function(plots, plot, name, type = NA_character_,
 plots_get <- function(plots, name = NULL, id = NULL) {
   check_plots(plots)
   i <- plots_locate(plots, name, id, .last = TRUE)
-  cli::cli_alert_info("{.val {plots$name[[i]]}} \u2014 {plots_describe(plots[i, ])}.")
+  size <- plots_size(plots, i)
+  cli::cli_alert_info(
+    "{.val {plots$name[[i]]}} \u2014 {plots_describe(plots$type[[i]], size$width, size$height)}."
+  )
   plots_pull(plots, i)
 }
 
@@ -202,9 +206,10 @@ plots_get <- function(plots, name = NULL, id = NULL) {
 plots_pull <- function(plots, i) {
   plot <- plots$plot[[i]]
   values <- plots$values[[i]]
+  changes <- values[setdiff(names(values), plots_reserved)]
 
-  if (length(values)) {
-    plot <- do.call(plots$customizer[[i]]$apply, c(list(plot), values))
+  if (length(changes)) {
+    plot <- do.call(plots$customizer[[i]]$apply, c(list(plot), changes))
     if (!inherits(plot, "ggplot")) {
       cli::cli_abort(c(
         "The customizer for {.val {plots$name[[i]]}} did not return a plot.",
@@ -212,13 +217,26 @@ plots_pull <- function(plots, i) {
       ))
     }
   }
-  plot + canvas(width = plots$width[[i]], height = plots$height[[i]])
+  # Checked here rather than only where it is set, because these are ordinary
+  # columns and a `mutate()` can put anything in them.
+  size <- plots_size(plots, i)
+  for (side in c("width", "height")) {
+    value <- size[[side]]
+    if (!is.numeric(value) || length(value) != 1L || is.na(value) || value <= 0) {
+      cli::cli_abort(c(
+        "The canvas for {.val {plots$name[[i]]}} is not usable.",
+        "x" = "Its {.field {side}} is {.val {value}}.",
+        "i" = "Set one with {.fn plots_set}, or go back with {.fn plots_reset}."
+      ))
+    }
+  }
+  plot + canvas(width = size$width, height = size$height)
 }
 
 # "bar, 15 x 9 in", for the messages.
-plots_describe <- function(row) {
-  size <- paste0(fmt_number(row$width), " \u00d7 ", fmt_number(row$height), " in")
-  if (is.na(row$type)) size else paste0(row$type, ", ", size)
+plots_describe <- function(type, width, height) {
+  size <- paste0(fmt_number(width), " \u00d7 ", fmt_number(height), " in")
+  if (is.na(type)) size else paste0(type, ", ", size)
 }
 
 #' @title Change a plot in a collection
@@ -236,7 +254,8 @@ plots_describe <- function(row) {
 #'   `NA` takes a value away, for example `title = NA` for no title.
 #' @param title,subtitle,caption Label text, for customizers that offer them.
 #' @param width,height Canvas size in inches. These belong to the collection
-#'   rather than the customizer, so every plot accepts them.
+#'   rather than the customizer, so every plot accepts them. The size the plot was
+#'   added with is what [plots_reset()] goes back to.
 #' @param show Whether to preview the changed plot. It is shown at its true
 #'   output size in the RStudio viewer, and drawn the ordinary way anywhere
 #'   else. In a pipe of several calls each one previews, so pass `FALSE` when
@@ -266,32 +285,36 @@ plots_set <- function(plots, name = NULL, id = NULL, ...,
   check_plots(plots)
   i <- plots_locate(plots, name, id)
 
-  named <- list(title = title, subtitle = subtitle, caption = caption)
+  named <- list(title = title, subtitle = subtitle, caption = caption,
+                width = width, height = height)
   changes <- c(named[!vapply(named, is.null, logical(1))], list(...))
-  changes <- check_values(changes, plots$customizer[[i]], plots$plot[[i]])
+  changes <- check_values(
+    changes, plots$customizer[[i]], plots$plot[[i]],
+    geometry = geometry_params(plots$width[[i]], plots$height[[i]]),
+    existing = plots$values[[i]]
+  )
 
   if (length(changes)) {
     values <- plots$values[[i]]
     values[names(changes)] <- changes
     plots$values[[i]] <- values
   }
-  if (!is.null(width)) plots$width[[i]] <- check_size(width, "width")
-  if (!is.null(height)) plots$height[[i]] <- check_size(height, "height")
 
   if (isTRUE(show)) print(plots_pull(plots, i))
   plots
 }
 
 #' @title Forget changes made to a plot
-#' @description Drops the changes recorded against a plot and puts its canvas
-#'   back to the default for its type. The plot itself was never changed, so
-#'   what comes back is what the plot always was.
+#' @description Drops the changes recorded against a plot. The plot itself was
+#'   never changed and neither was the canvas it was added with, so what comes
+#'   back is the plot as the script declared it.
 #'
 #' @inheritParams plots_get
 #' @param name,id Which plots to reset. Every plot in the collection when both
 #'   are omitted.
 #' @param params Which changes to forget, by name, for example
 #'   `c("title", "width")`. All of them when `NULL`.
+#' @param show Whether to preview the plot afterwards. Only when resetting one.
 #'
 #' @return The collection, with those changes forgotten.
 #'
@@ -306,7 +329,8 @@ plots_set <- function(plots, name = NULL, id = NULL, ...,
 #' plots_get(plots, "scatter")$labels$title
 #'
 #' @export
-plots_reset <- function(plots, name = NULL, id = NULL, params = NULL) {
+plots_reset <- function(plots, name = NULL, id = NULL, params = NULL,
+                        show = interactive()) {
   check_plots(plots)
   rows <- if (is.null(name) && is.null(id)) {
     seq_len(nrow(plots))
@@ -316,23 +340,28 @@ plots_reset <- function(plots, name = NULL, id = NULL, params = NULL) {
   if (!is.null(params) && (!is.character(params) || anyNA(params))) {
     cli::cli_abort("{.arg params} must be a character vector without {.val NA}.")
   }
-
-  dims <- plots_meta_raw(plots)$dims
-  for (i in rows) {
-    size <- plots_dims_lookup(dims, plots$type[[i]])
-    if (is.null(params)) {
-      plots$values[[i]] <- list()
-      plots$width[[i]] <- size$width
-      plots$height[[i]] <- size$height
-    } else {
-      plots$values[[i]] <- plots$values[[i]][
-        setdiff(names(plots$values[[i]]), params)
-      ]
-      if ("width" %in% params) plots$width[[i]] <- size$width
-      if ("height" %in% params) plots$height[[i]] <- size$height
+  if (!is.null(params)) {
+    held <- unique(unlist(lapply(rows, function(i) names(plots$values[[i]]))))
+    unknown <- setdiff(params, held)
+    if (length(unknown)) {
+      cli::cli_abort(c(
+        "Nothing to reset for {.val {unknown}}.",
+        "i" = if (length(held)) "These plots hold changes to {.val {held}}."
+              else "These plots hold no changes at all."
+      ))
     }
   }
-  cli::cli_alert_success("Reset {length(rows)} plot{?s}.")
+
+  dropped <- 0L
+  for (i in rows) {
+    values <- plots$values[[i]]
+    keep <- if (is.null(params)) character() else setdiff(names(values), params)
+    dropped <- dropped + length(values) - length(keep)
+    plots$values[[i]] <- if (length(keep)) values[keep] else list()
+  }
+  cli::cli_alert_success("Reset {dropped} change{?s} on {length(rows)} plot{?s}.")
+
+  if (isTRUE(show) && length(rows) == 1L) print(plots_pull(plots, rows))
   plots
 }
 
@@ -400,16 +429,10 @@ plots_params <- function(plots, name = NULL, id = NULL) {
     param_record(key, params[[key]], values[[key]])
   })
 
-  size <- plots_dims_lookup(plots_meta_raw(plots)$dims, plots$type[[i]])
-  # A canvas is a change only when it is not the default for its type.
-  changed <- function(value, default) if (isTRUE(all.equal(value, default))) NULL else value
+  geometry <- geometry_params(plots$width[[i]], plots$height[[i]])
   records <- c(records, list(
-    param_record("width", param_number("Width (in)", default = size$width,
-                                       min = 1, max = 60, step = 0.5),
-                 changed(plots$width[[i]], size$width)),
-    param_record("height", param_number("Height (in)", default = size$height,
-                                        min = 1, max = 60, step = 0.5),
-                 changed(plots$height[[i]], size$height))
+    param_record("width", geometry$width, values[["width"]]),
+    param_record("height", geometry$height, values[["height"]])
   ))
   structure(records, names = vapply(records, function(r) r$key, character(1)),
             class = "plots_params")
@@ -657,6 +680,34 @@ plots_dims <- function(..., .default = c(15, 9)) {
   structure(out, class = "plots_dims")
 }
 
+# A `canvas()` already on a plot, in inches. The collection works in inches, so a
+# canvas in centimetres or pixels is converted rather than read as a number.
+canvas_inches <- function(canvas) {
+  if (is.null(canvas)) return(NULL)
+  unit <- (canvas$units %||% "in")[[1]]
+  per_inch <- switch(unit, "in" = 1, "cm" = 2.54, "mm" = 25.4, "px" = canvas$dpi %||% 300)
+  if (is.null(per_inch)) return(NULL)
+  list(width = canvas$width / per_inch, height = canvas$height / per_inch)
+}
+
+# The canvas, offered the way a customizer offers its own parameters. The size the
+# script declared is the default, and anything set later is a change on top of it.
+geometry_params <- function(width, height) {
+  list(
+    width  = param_number("Width (in)", default = width, min = 1, max = 60, step = 0.5),
+    height = param_number("Height (in)", default = height, min = 1, max = 60, step = 0.5)
+  )
+}
+
+# The canvas a plot renders at: what was set, else what was declared.
+plots_size <- function(plots, i) {
+  values <- plots$values[[i]]
+  list(
+    width = values[["width"]] %||% plots$width[[i]],
+    height = values[["height"]] %||% plots$height[[i]]
+  )
+}
+
 plots_dims_lookup <- function(dims, type) {
   size <- if (!is.na(type)) dims[[type]] else NULL
   size <- size %||% dims[[".default"]]
@@ -681,6 +732,13 @@ check_plots <- function(plots, call = parent.frame()) {
 check_name <- function(name, call = parent.frame()) {
   if (!is.character(name) || length(name) != 1L || is.na(name) || !nzchar(name)) {
     cli::cli_abort("{.arg name} must be a single non-empty string.", call = call)
+  }
+  if (grepl("^/|/$|//", name)) {
+    cli::cli_abort(
+      c("{.arg name} has an empty folder in it: {.val {name}}.",
+        "i" = "A slash separates folders, so it needs a name on each side."),
+      call = call
+    )
   }
   invisible(name)
 }
@@ -731,26 +789,35 @@ check_dims <- function(dims, call = parent.frame()) {
 }
 
 # Changes, checked against the parameters the plot's customizer offers.
-check_values <- function(values, customizer, plot, call = parent.frame()) {
+check_values <- function(values, customizer, plot, geometry = list(),
+                         existing = list(), call = parent.frame()) {
   if (!length(values)) return(list())
   if (!length(names(values)) || !all(nzchar(names(values)))) {
     cli::cli_abort("Every change must be named after a parameter.", call = call)
   }
 
-  params <- customizer_params(customizer, plot, call = call)
+  params <- c(customizer_params(customizer, plot, call = call), geometry)
   unknown <- setdiff(names(values), names(params))
   if (length(unknown)) {
     cli::cli_abort(
       c(
         "This plot has no parameter {.val {unknown}}.",
-        "i" = "It takes {.val {names(params)}}, plus {.arg width} and {.arg height}.",
+        "i" = "It takes {.val {names(params)}}.",
         "i" = "{.code plots_params(plots, {.val {'<name>'}})} lists them in full."
       ),
       call = call
     )
   }
   for (key in names(values)) {
-    values[[key]] <- param_check(params[[key]], values[[key]], key, call = call)
+    param <- params[[key]]
+    value <- param_check(param, values[[key]], key, call = call)
+    # A mapping is always whole: changing one key keeps the rest, so a customizer
+    # never receives a palette with holes in it.
+    if (identical(param$type, "mapping") && is.list(value)) {
+      whole <- existing[[key]] %||% param$default
+      if (length(whole)) value <- utils::modifyList(as.list(whole), value)
+    }
+    values[[key]] <- value
   }
   values
 }

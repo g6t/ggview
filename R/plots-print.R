@@ -82,8 +82,10 @@ print.plots_tbl <- function(x, n = Inf, ...) {
 plots_lines <- function(x, folders) {
   leaf <- plots_leaf(x$name)
   type <- ifelse(is.na(x$type), "", x$type)
-  size <- paste(fmt_number(x$width), if (cli::is_utf8_output()) "\u00d7" else "x",
-                fmt_number(x$height))
+  canvas <- lapply(seq_len(nrow(x)), function(i) plots_size(x, i))
+  times <- if (cli::is_utf8_output()) "\u00d7" else "x"
+  size <- paste(fmt_number(vapply(canvas, function(s) s$width, numeric(1))), times,
+                fmt_number(vapply(canvas, function(s) s$height, numeric(1))))
   index <- format(seq_len(nrow(x)), width = max(2, nchar(nrow(x))))
   mark <- ifelse(lengths(x$values) > 0, "*", " ")
   titles <- plots_titles(x)

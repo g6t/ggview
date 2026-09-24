@@ -23,7 +23,13 @@ param_choices(label, choices, default = NULL)
 
 param_color(label, default = NULL)
 
-param_mapping(label, keys, to = c("color", "text", "number"), default = NULL)
+param_mapping(
+  label,
+  keys,
+  to = c("color", "text", "number"),
+  labels = NULL,
+  default = NULL
+)
 }
 \arguments{
 \item{label}{What to call the parameter, for a person reading it.}
@@ -39,6 +45,9 @@ param_mapping(label, keys, to = c("color", "text", "number"), default = NULL)
 plot's fill, say. Read them off the plot.}
 
 \item{to}{What each key maps to: \code{"color"}, \code{"text"} or \code{"number"}.}
+
+\item{labels}{What to call each key, when the keys themselves read badly —
+\code{TRUE} and \code{FALSE}, say. One per key.}
 }
 \value{
 A parameter.
@@ -58,6 +67,7 @@ param_number("Text size", default = 11, min = 6, max = 40)
 param_choice("Legend", choices = c("right", "bottom", "none"))
 param_choices("Brands to show", choices = c("Ours", "Rival A", "Rival B"))
 param_mapping("Colors", keys = c("Ours", "Rival A"), to = "color")
+param_mapping("Colors", keys = c("TRUE", "FALSE"), labels = c("Ours", "Others"))
 
 }
 \seealso{

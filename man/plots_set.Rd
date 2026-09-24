@@ -33,7 +33,8 @@ stored collection.}
 \item{title, subtitle, caption}{Label text, for customizers that offer them.}
 
 \item{width, height}{Canvas size in inches. These belong to the collection
-rather than the customizer, so every plot accepts them.}
+rather than the customizer, so every plot accepts them. The size the plot was
+added with is what \code{\link[=plots_reset]{plots_reset()}} goes back to.}
 
 \item{show}{Whether to preview the changed plot. It is shown at its true
 output size in the RStudio viewer, and drawn the ordinary way anywhere

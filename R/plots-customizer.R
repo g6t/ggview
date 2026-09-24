@@ -54,7 +54,9 @@ customizer <- function(apply, params) {
 #' @export
 print.plots_customizer <- function(x, ...) {
   cli::cli_rule(left = "{.cls plots_customizer}")
-  cli::cli_verbatim(paste0("  parameters: ", paste(customizer_names(x), collapse = ", ")))
+  names <- customizer_names(x)
+  if (identical(names, "...")) names <- "set by the plot"
+  cli::cli_verbatim(paste0("  parameters: ", paste(names, collapse = ", ")))
   invisible(x)
 }
 
@@ -106,6 +108,52 @@ params_labels <- function(plot) {
 
 # --- the parameters a customizer can offer -----------------------------------
 
+#' @title Add parameters to a customizer
+#' @description Builds a customizer that offers everything `base` offers plus
+#'   whatever `apply` and `params` add. Use it to keep the labels from
+#'   [customizer_default()] while adding something of your own, rather than
+#'   listing them again.
+#'
+#'   A parameter of the same name replaces the one it shadows.
+#'
+#' @param base The customizer to build on, usually [customizer_default()].
+#' @inheritParams customizer
+#'
+#' @return A customizer.
+#'
+#' @examples
+#' library(ggplot2)
+#'
+#' # The default labels, plus a switch for the legend's own title.
+#' customizer_extend(
+#'   customizer_default(),
+#'   apply = function(plot, legend_title = NULL) {
+#'     if (is.null(legend_title)) plot else plot + labs(color = legend_title)
+#'   },
+#'   params = function(plot) list(legend_title = param_text("Legend title"))
+#' )
+#'
+#' @export
+customizer_extend <- function(base, apply, params) {
+  check_customizer(base)
+  added <- customizer(apply, params)
+  base_names <- names(formals(base$apply))[-1]
+
+  customizer(
+    apply = function(plot, ...) {
+      values <- list(...)
+      theirs <- intersect(names(values), base_names)
+      plot <- do.call(base$apply, c(list(plot), values[theirs]))
+      do.call(added$apply, c(list(plot), values[setdiff(names(values), theirs)]))
+    },
+    params = function(plot) {
+      mine <- added$params(plot)
+      theirs <- base$params(plot)
+      c(theirs[setdiff(names(theirs), names(mine))], mine)
+    }
+  )
+}
+
 #' @title Parameters a customizer offers
 #' @description The kinds of parameter a [customizer()] can offer, one function
 #'   per kind. A program reads the kind from [plots_params()] and shows the
@@ -121,6 +169,8 @@ params_labels <- function(plot) {
 #'   `param_choices()`.
 #' @param keys The things being mapped, for `param_mapping()` — the levels of a
 #'   plot's fill, say. Read them off the plot.
+#' @param labels What to call each key, when the keys themselves read badly —
+#'   `TRUE` and `FALSE`, say. One per key.
 #' @param to What each key maps to: `"color"`, `"text"` or `"number"`.
 #' @param min,max,step Bounds and increment for `param_number()`. Optional.
 #'
@@ -134,6 +184,7 @@ params_labels <- function(plot) {
 #' param_choice("Legend", choices = c("right", "bottom", "none"))
 #' param_choices("Brands to show", choices = c("Ours", "Rival A", "Rival B"))
 #' param_mapping("Colors", keys = c("Ours", "Rival A"), to = "color")
+#' param_mapping("Colors", keys = c("TRUE", "FALSE"), labels = c("Ours", "Others"))
 #'
 #' @name param
 NULL
@@ -183,10 +234,14 @@ param_color <- function(label, default = NULL) {
 #' @rdname param
 #' @export
 param_mapping <- function(label, keys, to = c("color", "text", "number"),
-                          default = NULL) {
+                          labels = NULL, default = NULL) {
+  keys <- check_choices(keys, "keys")
+  if (!is.null(labels) && (!is.character(labels) || length(labels) != length(keys))) {
+    cli::cli_abort("{.arg labels} must be one string per key, or {.code NULL}.")
+  }
   # `to` rather than `value_type`, so that `param$value` on an untouched
   # parameter cannot partial-match its way to the wrong answer.
-  new_param("mapping", label, default, keys = check_choices(keys, "keys"),
+  new_param("mapping", label, default, keys = keys, labels = labels,
             to = match.arg(to))
 }
 
@@ -283,14 +338,23 @@ check_customizer_fun <- function(fun, arg, call = parent.frame()) {
   if (!length(formals(fun))) {
     cli::cli_abort("{.arg {arg}} must take the plot as its first argument.", call = call)
   }
-  free <- codetools::findGlobals(fun, merge = FALSE)$variables
-  risky <- free[vapply(free, risky_variable, logical(1), environment(fun))]
+  globals <- codetools::findGlobals(fun, merge = FALSE)
+  env <- environment(fun)
+  where <- function(names) vapply(names, binding_of, character(1), env)
+  # A value that is nowhere to be found is already broken. A function that is
+  # nowhere is usually a package that simply is not attached right now, and it
+  # will be wherever the plot is drawn, so only a session-local one is a risk.
+  risky <- c(
+    globals$variables[where(globals$variables) %in% c("session", "nowhere")],
+    globals$functions[where(globals$functions) == "session"]
+  )
   if (length(risky)) {
     cli::cli_abort(
       c(
-        "{.arg {arg}} uses {length(risky)} variable{?s} it does not define: {.val {risky}}.",
+        "{.arg {arg}} uses {length(risky)} name{?s} it does not define: {.val {risky}}.",
         "i" = "A customizer is read back in another session, where that is gone.",
-        "i" = "Pass the value in as a parameter instead."
+        "i" = "Pass it in as a parameter, or capture it in a function that builds the
+               customizer."
       ),
       call = call
     )
@@ -298,17 +362,18 @@ check_customizer_fun <- function(fun, arg, call = parent.frame()) {
   invisible(fun)
 }
 
-# A variable is a risk when it binds in the session that wrote the customizer,
-# or nowhere at all. One held in a package, or captured by the function itself,
-# travels with it.
-risky_variable <- function(name, env) {
+# Where a name binds, starting from a function's own environment. "local" means
+# it travels with the function, in a package or in the function's own closure.
+# "session" means it lives in the session that wrote the customizer and nowhere
+# else. "nowhere" means it cannot be found at all right now.
+binding_of <- function(name, env) {
   while (!identical(env, emptyenv())) {
     if (exists(name, envir = env, inherits = FALSE)) {
-      return(identical(env, globalenv()))
+      return(if (identical(env, globalenv())) "session" else "local")
     }
     env <- parent.env(env)
   }
-  TRUE
+  "nowhere"
 }
 
 check_customizer <- function(customizer, call = parent.frame()) {

@@ -127,12 +127,16 @@ test_that("setting records a change and leaves the rest alone", {
                        legend = "bottom", width = 3, height = 2)
   expect_equal(changed$values[[1]]$title, "T")
   expect_equal(changed$values[[1]]$legend, "bottom")
-  expect_equal(c(changed$width[[1]], changed$height[[1]]), c(3, 2))
+  # The canvas is a change on top of the size the plot was added with.
+  expect_equal(c(changed$values[[1]]$width, changed$values[[1]]$height), c(3, 2))
+  expect_equal(c(changed$width[[1]], changed$height[[1]]), c(12, 8))
+  expect_equal(plots_get(changed, "Module 1/first")$canvas$width, 3)
   expect_equal(changed$values[[2]], list())
 
   # A second change adds to the first rather than replacing it.
   twice <- plots_set(changed, "Module 1/first", subtitle = "S")
-  expect_named(twice$values[[1]], c("title", "caption", "legend", "subtitle"))
+  expect_named(twice$values[[1]],
+               c("title", "caption", "width", "height", "legend", "subtitle"))
 
   expect_error(plots_set(plots, "Module 1/first", color = "red"), "no parameter")
   expect_error(plots_set(plots, "Module 1/first", legend = "sideways"), "must be one of")
@@ -146,15 +150,24 @@ test_that("resetting forgets changes and restores the canvas", {
 
   one <- quietly(plots_reset(plots, "Module 1/first"))
   expect_equal(one$values[[1]], list())
-  expect_equal(one$width[[1]], 12)
+  expect_equal(plots_pull(one, 1)$canvas$width, 12)
   expect_equal(plots_pull(one, 1)$labels$title, "Title")
 
   some <- quietly(plots_reset(plots, "Module 1/first", params = "width"))
   expect_equal(some$values[[1]]$title, "T")
-  expect_equal(some$width[[1]], 12)
+  expect_equal(plots_pull(some, 1)$canvas$width, 12)
 
   all <- quietly(plots_reset(plots_set(plots, "Module 1/second", title = "S")))
   expect_equal(lengths(all$values), c(0L, 0L))
+
+  # A size the script asked for is what a reset goes back to, not the type default.
+  declared <- quietly(plots_append(plots_init(), p, name = "tall", type = "bar",
+                                   height = 4.5, show = FALSE))
+  declared <- quietly(plots_reset(plots_set(declared, "tall", height = 20), "tall"))
+  expect_equal(plots_pull(declared, 1)$canvas$height, 4.5)
+
+  expect_error(quietly(plots_reset(plots, "Module 1/first", params = "nope")),
+               "Nothing to reset")
 })
 
 test_that("plots can be removed", {
@@ -190,6 +203,32 @@ test_that("params describe what a plot accepts", {
                             "Module 1/first")$width$value, 4)
 })
 
+test_that("the canvas survives whatever unit it arrived in", {
+  px <- quietly(plots_append(plots_init(), p + canvas(1200, 900, units = "px", dpi = 300),
+                             name = "a", show = FALSE))
+  expect_equal(c(px$width, px$height), c(4, 3))
+
+  cm <- quietly(plots_append(plots_init(), p + canvas(2.54, 5.08, units = "cm"),
+                             name = "a", show = FALSE))
+  expect_equal(c(cm$width, cm$height), c(1, 2))
+})
+
+test_that("a canvas that is not usable stops at render", {
+  plots <- two_plots()
+  plots$width[[1]] <- NA_real_
+  expect_error(plots_pull(plots, 1), "not usable")
+
+  plots$width[[1]] <- -3
+  expect_error(plots_pull(plots, 1), "not usable")
+})
+
+test_that("a name may not have an empty folder", {
+  for (bad in c("a/", "/a", "a//b")) {
+    expect_error(quietly(plots_append(plots_init(), p, name = bad, show = FALSE)),
+                 "empty folder")
+  }
+})
+
 test_that("a customizer must be able to travel", {
   expect_error(customizer("nope", function(plot) list()), "must be a function")
   expect_error(customizer(function() NULL, function(plot) list()), "first argument")
@@ -205,6 +244,21 @@ test_that("a customizer must be able to travel", {
   session_var <- function(plot, a = NULL) paste(plot, a_session_object)
   environment(session_var) <- globalenv()
   expect_error(customizer(session_var, function(plot) list()), "does not define")
+
+  # A function it does not define is the same problem: it would not be found.
+  assign("a_project_builder", function(x) x, envir = globalenv())
+  on.exit(rm("a_project_builder", envir = globalenv()), add = TRUE)
+  calls_global <- function(plot, a = NULL) a_project_builder(plot)
+  environment(calls_global) <- globalenv()
+  expect_error(customizer(calls_global, function(plot) list()), "does not define")
+
+  # Calling a package's function, either way round, is not.
+  qualified <- function(plot, a = NULL) ggplot2::labs(title = a)
+  bare <- function(plot, a = NULL) labs(title = a)
+  environment(qualified) <- globalenv()
+  environment(bare) <- globalenv()
+  expect_s3_class(customizer(qualified, function(plot) list()), "plots_customizer")
+  expect_s3_class(customizer(bare, function(plot) list()), "plots_customizer")
 
   # A package's own objects, and things the function holds itself, are fine.
   expect_s3_class(customizer_default(), "plots_customizer")
@@ -269,6 +323,53 @@ test_that("a custom customizer runs, and is checked", {
   oops <- quietly(plots_append(plots_init(customizer = broken), p, name = "x",
                                a = "go", show = FALSE))
   expect_error(plots_pull(oops, 1), "did not return a plot")
+})
+
+test_that("a customizer can be extended rather than replaced", {
+  extended <- customizer_extend(
+    customizer_default(),
+    apply = function(plot, note = NULL) {
+      if (is.null(note)) plot else plot + ggplot2::labs(tag = note)
+    },
+    params = function(plot) list(note = param_text("Note"))
+  )
+  plots <- quietly(plots_append(plots_init(customizer = extended), titled,
+                                name = "a", show = FALSE))
+
+  expect_true(all(c("title", "note") %in% names(plots_params(plots, "a"))))
+
+  both <- plots_set(plots, "a", title = "New", note = "Draft")
+  rendered <- plots_pull(both, 1)
+  expect_equal(rendered$labels$title, "New")
+  expect_equal(rendered$labels$tag, "Draft")
+})
+
+test_that("a mapping arrives whole, and can be labelled", {
+  keyed <- customizer(
+    apply = function(plot, colors = NULL) {
+      if (!is.null(colors)) attr(plot, "seen") <- colors
+      plot
+    },
+    params = function(plot) {
+      list(colors = param_mapping("Colors", keys = c("a", "b"), to = "color",
+                                  labels = c("Ours", "Theirs"),
+                                  default = list(a = "#111111", b = "#222222")))
+    }
+  )
+  plots <- quietly(plots_append(plots_init(customizer = keyed), p, name = "x",
+                                show = FALSE))
+
+  # One key changed, the rest kept.
+  one <- plots_set(plots, "x", colors = c(a = "#36c8ef"))
+  expect_equal(one$values[[1]]$colors, list(a = "#36c8ef", b = "#222222"))
+
+  # And a second change builds on the first.
+  two <- plots_set(one, "x", colors = c(b = "#50bd90"))
+  expect_equal(two$values[[1]]$colors, list(a = "#36c8ef", b = "#50bd90"))
+
+  expect_equal(plots_params(plots, "x")$colors$labels, c("Ours", "Theirs"))
+  expect_error(param_mapping("C", keys = c("a", "b"), labels = "only one"),
+               "one string per key")
 })
 
 test_that("each kind of parameter checks its value", {

@@ -4,7 +4,7 @@
 \alias{plots_reset}
 \title{Forget changes made to a plot}
 \usage{
-plots_reset(plots, name = NULL, id = NULL, params = NULL)
+plots_reset(plots, name = NULL, id = NULL, params = NULL, show = interactive())
 }
 \arguments{
 \item{plots}{A collection, from \code{\link[=plots_init]{plots_init()}}.}
@@ -14,14 +14,16 @@ are omitted.}
 
 \item{params}{Which changes to forget, by name, for example
 \code{c("title", "width")}. All of them when \code{NULL}.}
+
+\item{show}{Whether to preview the plot afterwards. Only when resetting one.}
 }
 \value{
 The collection, with those changes forgotten.
 }
 \description{
-Drops the changes recorded against a plot and puts its canvas
-back to the default for its type. The plot itself was never changed, so
-what comes back is what the plot always was.
+Drops the changes recorded against a plot. The plot itself was
+never changed and neither was the canvas it was added with, so what comes
+back is the plot as the script declared it.
 }
 \examples{
 library(ggplot2)
