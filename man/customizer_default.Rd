@@ -10,9 +10,14 @@ customizer_default()
 A customizer.
 }
 \description{
-Offers the labels any plot has: its title, subtitle, footnote,
-axis titles, and where the legend sits. Each one defaults to what the plot
-already carries, \code{NA} removes it, and leaving it alone changes nothing.
+Offers what any plot has, whatever it draws: its title,
+subtitle, footnote and axis titles, the size of each of those, the size and
+line wrapping of the axis text, the overall text size, where the legend sits
+and which way it runs, and whether the gridlines show. Each one defaults to what the plot already carries, \code{NA}
+leaves it alone, and not mentioning it changes nothing.
+
+Sizes are changed in place, so a title drawn as a \code{ggtext} textbox stays a
+textbox. Replacing it outright is an error in ggplot2, not a silent loss.
 }
 \examples{
 customizer_default()

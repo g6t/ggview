@@ -18,15 +18,26 @@
     Code
       print(plots_params(plots, "Module 1/first"))
     Message
-      -- <plots_params> ---------------------------------------------- 8 parameters --
-        title    text   Title -> Changed
-        subtitle text   Subtitle
-        caption  text   Caption
-        x        text   wt
-        y        text   mpg
-        legend   choice <none>  (right, left, top, bottom, none)
-        width    number 12 -> 4
-        height   number 8
+      -- <plots_params> --------------------------------------------- 19 parameters --
+        title            text   Title -> Changed
+        title_size       number 13.2
+        subtitle         text   Subtitle
+        subtitle_size    number 11
+        caption          text   Caption
+        caption_size     number 8.8
+        x                text   wt
+        x_size           number 11
+        y                text   mpg
+        y_size           number 11
+        axis_text_size   number 8.8
+        axis_text_wrap   number 
+        text_size        number 11
+        legend           choice <none>  (right, left, top, bottom, none)
+        legend_direction choice <none>  (horizontal, vertical)
+        x_grid           flag   TRUE
+        y_grid           flag   TRUE
+        width            number 12 -> 4
+        height           number 8
     Code
       print(plots_dims(heatmap = c(18, 11)))
     Message
@@ -43,5 +54,5 @@
       print(customizer_default())
     Message
       -- <plots_customizer> ----------------------------------------------------------
-        parameters: title, subtitle, caption, x, y, legend
+        parameters: title, title_size, subtitle, subtitle_size, caption, caption_size, x, x_size, y, y_size, axis_text_size, axis_text_wrap, text_size, legend, legend_direction, x_grid, y_grid
 

@@ -61,9 +61,14 @@ print.plots_customizer <- function(x, ...) {
 }
 
 #' @title The customizer every plot starts with
-#' @description Offers the labels any plot has: its title, subtitle, footnote,
-#'   axis titles, and where the legend sits. Each one defaults to what the plot
-#'   already carries, `NA` removes it, and leaving it alone changes nothing.
+#' @description Offers what any plot has, whatever it draws: its title,
+#'   subtitle, footnote and axis titles, the size of each of those, the size and
+#'   line wrapping of the axis text, the overall text size, where the legend sits
+#'   and which way it runs, and whether the gridlines show. Each one defaults to what the plot already carries, `NA`
+#'   leaves it alone, and not mentioning it changes nothing.
+#'
+#'   Sizes are changed in place, so a title drawn as a `ggtext` textbox stays a
+#'   textbox. Replacing it outright is an error in ggplot2, not a silent loss.
 #'
 #' @return A customizer.
 #'
@@ -78,9 +83,25 @@ customizer_default <- function() {
 }
 
 legend_positions <- c("right", "left", "top", "bottom", "none")
+legend_directions <- c("horizontal", "vertical")
 
-customize_labels <- function(plot, title = NULL, subtitle = NULL, caption = NULL,
-                             x = NULL, y = NULL, legend = NULL) {
+# The theme element each size parameter changes.
+size_elements <- c(
+  title_size = "plot.title", subtitle_size = "plot.subtitle",
+  caption_size = "plot.caption", x_size = "axis.title.x",
+  y_size = "axis.title.y", text_size = "text"
+)
+
+customize_labels <- function(plot,
+                             title = NULL, title_size = NULL,
+                             subtitle = NULL, subtitle_size = NULL,
+                             caption = NULL, caption_size = NULL,
+                             x = NULL, x_size = NULL,
+                             y = NULL, y_size = NULL,
+                             axis_text_size = NULL, axis_text_wrap = NULL,
+                             text_size = NULL,
+                             legend = NULL, legend_direction = NULL,
+                             x_grid = NULL, y_grid = NULL) {
   labels <- list(title = title, subtitle = subtitle, caption = caption, x = x, y = y)
   labels <- labels[!vapply(labels, is.null, logical(1))]
   if (length(labels)) {
@@ -88,22 +109,146 @@ customize_labels <- function(plot, title = NULL, subtitle = NULL, caption = NULL
     labels <- lapply(labels, function(value) if (is.na(value)) NULL else value)
     plot <- plot + do.call(ggplot2::labs, labels)
   }
-  if (!is.null(legend) && !is.na(legend)) {
-    plot <- plot + ggplot2::theme(legend.position = legend)
+
+  sizes <- list(title_size = title_size, subtitle_size = subtitle_size,
+                caption_size = caption_size, x_size = x_size, y_size = y_size,
+                text_size = text_size)
+  for (key in names(sizes)) {
+    if (given(sizes[[key]])) plot <- element_resize(plot, size_elements[[key]], sizes[[key]])
   }
+
+  # A theme that sets both axis texts makes the parent element a no-op, so set both.
+  if (given(axis_text_size)) {
+    plot <- element_resize(plot, "axis.text.x", axis_text_size)
+    plot <- element_resize(plot, "axis.text.y", axis_text_size)
+  }
+  if (given(axis_text_wrap)) {
+    for (aesthetic in c("x", "y")) plot <- wrap_axis(plot, aesthetic, axis_text_wrap)
+  }
+
+  settings <- list()
+  if (given(legend)) settings$legend.position <- legend
+  if (given(legend_direction)) settings$legend.direction <- legend_direction
+  if (given(x_grid)) {
+    settings$panel.grid.major.x <- grid_element(x_grid)
+    settings$panel.grid.minor.x <- grid_element(x_grid)
+  }
+  if (given(y_grid)) {
+    settings$panel.grid.major.y <- grid_element(y_grid)
+    settings$panel.grid.minor.y <- grid_element(y_grid)
+  }
+  if (length(settings)) plot <- plot + do.call(ggplot2::theme, settings)
+
   plot
 }
 
 params_labels <- function(plot) {
+  theme <- plot_theme(plot)
+  size <- function(key) {
+    param_number(size_labels[[key]], default = element_size(theme, size_elements[[key]]),
+                 min = 4, max = 80, step = 1)
+  }
+
   list(
-    title    = param_text("Title",         default = plot_label(plot, "title")),
-    subtitle = param_text("Subtitle",      default = plot_label(plot, "subtitle")),
-    caption  = param_text("Footnote",      default = plot_label(plot, "caption")),
-    x        = param_text("X axis title",  default = plot_label(plot, "x")),
-    y        = param_text("Y axis title",  default = plot_label(plot, "y")),
-    legend   = param_choice("Legend", choices = legend_positions,
-                            default = legend_position(plot))
+    title            = param_text("Title", default = plot_label(plot, "title")),
+    title_size       = size("title_size"),
+    subtitle         = param_text("Subtitle", default = plot_label(plot, "subtitle")),
+    subtitle_size    = size("subtitle_size"),
+    caption          = param_text("Footnote", default = plot_label(plot, "caption")),
+    caption_size     = size("caption_size"),
+    x                = param_text("X axis title", default = plot_label(plot, "x")),
+    x_size           = size("x_size"),
+    y                = param_text("Y axis title", default = plot_label(plot, "y")),
+    y_size           = size("y_size"),
+    axis_text_size   = param_number("Axis text size",
+                                    default = element_size(theme, "axis.text.x"),
+                                    min = 4, max = 80, step = 1),
+    axis_text_wrap   = param_number("Axis text wrap (characters)",
+                                    min = 5, max = 120, step = 1),
+    text_size        = size("text_size"),
+    legend           = param_choice("Legend", choices = legend_positions,
+                                    default = legend_position(plot)),
+    legend_direction = param_choice("Legend direction", choices = legend_directions,
+                                    default = theme_string(plot, "legend.direction")),
+    x_grid           = param_flag("X gridlines", default = grid_shown(theme, "x")),
+    y_grid           = param_flag("Y gridlines", default = grid_shown(theme, "y"))
   )
+}
+
+size_labels <- c(
+  title_size = "Title size", subtitle_size = "Subtitle size",
+  caption_size = "Footnote size", x_size = "X axis title size",
+  y_size = "Y axis title size", text_size = "Text size"
+)
+
+# A value somebody actually asked for. `NULL` is "leave it alone" and so is `NA`
+# for a setting that has no empty state, such as a legend position.
+given <- function(value) !is.null(value) && !is.na(value)
+
+# Change one theme element's size without changing what kind of element it is.
+# A title drawn as a markdown textbox stays a textbox: ggplot2 refuses to merge
+# two kinds of element, so replacing it outright is an error.
+element_resize <- function(plot, name, size) {
+  current <- plot$theme[[name]]
+  element <- if (inherits(current, "element")) {
+    current$size <- size
+    current
+  } else {
+    ggplot2::element_text(size = size)
+  }
+  plot + do.call(ggplot2::theme, stats::setNames(list(element), name))
+}
+
+# Break a discrete axis's labels over several lines. Only the axis that carries
+# them is touched, and the scale's own name, limits and breaks are carried across,
+# because replacing a scale otherwise drops them.
+wrap_axis <- function(plot, aesthetic, width) {
+  built <- suppressMessages(ggplot2::ggplot_build(plot))
+  scale <- built$plot$scales$get_scales(aesthetic)
+  if (is.null(scale) || !isTRUE(scale$is_discrete())) return(plot)
+
+  build <- if (aesthetic == "x") ggplot2::scale_x_discrete else ggplot2::scale_y_discrete
+  suppressMessages(
+    plot + build(labels = wrap_labels(width), name = scale$name,
+                 limits = scale$limits, breaks = scale$breaks)
+  )
+}
+
+wrap_labels <- function(width) {
+  function(x) {
+    vapply(
+      as.character(x),
+      function(label) paste(strwrap(label, width = width), collapse = "\n"),
+      character(1), USE.NAMES = FALSE
+    )
+  }
+}
+
+# An empty line inherits the theme's own gridline styling, so a grid can be put
+# back without knowing how it was drawn.
+grid_element <- function(show) {
+  if (isTRUE(show)) ggplot2::element_line() else ggplot2::element_blank()
+}
+
+# The plot's theme filled in from the defaults it inherits, for reading what a
+# setting currently is. Older ggplot2 versions cannot say, and report nothing.
+plot_theme <- function(plot) {
+  tryCatch(ggplot2::complete_theme(plot$theme), error = function(e) NULL)
+}
+
+element_size <- function(theme, name) {
+  if (is.null(theme)) return(NULL)
+  size <- tryCatch(ggplot2::calc_element(name, theme)$size, error = function(e) NULL)
+  if (is.numeric(size) && length(size) == 1L) size else NULL
+}
+
+grid_shown <- function(theme, axis) {
+  if (is.null(theme)) return(NULL)
+  element <- tryCatch(
+    ggplot2::calc_element(paste0("panel.grid.major.", axis), theme),
+    error = function(e) NULL
+  )
+  if (is.null(element)) NULL else !inherits(element, "element_blank")
 }
 
 # --- the parameters a customizer can offer -----------------------------------
@@ -425,7 +570,9 @@ customizer_names <- function(customizer) {
   names(formals(customizer$apply))[-1]
 }
 
-legend_position <- function(plot) {
-  position <- plot$theme$legend.position
-  if (is.character(position) && length(position) == 1L) position else NA_character_
+legend_position <- function(plot) theme_string(plot, "legend.position")
+
+theme_string <- function(plot, name) {
+  value <- plot$theme[[name]]
+  if (is.character(value) && length(value) == 1L) value else NA_character_
 }

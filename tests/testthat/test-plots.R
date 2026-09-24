@@ -187,8 +187,10 @@ test_that("params describe what a plot accepts", {
   params <- plots_params(plots, "Module 1/first")
 
   expect_s3_class(params, "plots_params")
-  expect_named(params, c("title", "subtitle", "caption", "x", "y", "legend",
-                         "width", "height"))
+  expect_named(params, c("title", "title_size", "subtitle", "subtitle_size",
+                         "caption", "caption_size", "x", "x_size", "y", "y_size",
+                         "axis_text_size", "axis_text_wrap", "text_size", "legend",
+                         "legend_direction", "x_grid", "y_grid", "width", "height"))
   expect_equal(params$title$type, "text")
   expect_equal(params$title$default, "Title")
   expect_equal(params$title$value, "T")
@@ -323,6 +325,78 @@ test_that("a custom customizer runs, and is checked", {
   oops <- quietly(plots_append(plots_init(customizer = broken), p, name = "x",
                                a = "go", show = FALSE))
   expect_error(plots_pull(oops, 1), "did not return a plot")
+})
+
+test_that("the default reaches sizes, gridlines and the legend", {
+  effective <- function(plot, element) {
+    ggplot2::calc_element(element, ggplot2::complete_theme(plot$theme))
+  }
+  plots <- quietly(plots_append(plots_init(), titled, name = "a", type = "bar",
+                                show = FALSE))
+
+  # Defaults are read off the plot, not left empty.
+  params <- plots_params(plots, "a")
+  expect_true(is.numeric(params$title_size$default))
+  expect_true(params$x_grid$default)
+
+  changed <- plots_set(plots, "a", title_size = 30, caption_size = 12, text_size = 16,
+                       legend = "bottom", legend_direction = "horizontal",
+                       x_grid = FALSE, y_grid = TRUE, show = FALSE)
+  out <- plots_pull(changed, 1)
+
+  expect_equal(effective(out, "plot.title")$size, 30)
+  expect_equal(effective(out, "plot.caption")$size, 12)
+  expect_equal(effective(out, "text")$size, 16)
+  expect_equal(effective(out, "legend.position"), "bottom")
+  expect_equal(effective(out, "legend.direction"), "horizontal")
+  expect_s3_class(effective(out, "panel.grid.major.x"), "element_blank")
+  expect_false(inherits(effective(out, "panel.grid.major.y"), "element_blank"))
+
+  # The stored plot is untouched, so a reset gives the original size back.
+  expect_equal(effective(plots_pull(quietly(plots_reset(changed, "a")), 1), "plot.title")$size,
+               effective(plots_pull(plots, 1), "plot.title")$size)
+
+  expect_error(plots_set(plots, "a", legend_direction = "sideways"), "must be one of")
+  expect_error(plots_set(plots, "a", x_grid = "yes"), "TRUE")
+})
+
+test_that("axis text can be resized and wrapped", {
+  answers <- data.frame(k = c("Very satisfied overall", "Not at all"), v = 1:2)
+  bars <- ggplot2::ggplot(answers, ggplot2::aes(k, v)) + ggplot2::geom_col()
+  plots <- quietly(plots_append(plots_init(), bars, name = "a", show = FALSE))
+
+  out <- plots_pull(plots_set(plots, "a", axis_text_size = 18, axis_text_wrap = 12,
+                              show = FALSE), 1)
+  theme <- ggplot2::complete_theme(out$theme)
+  expect_equal(ggplot2::calc_element("axis.text.x", theme)$size, 18)
+  expect_equal(ggplot2::calc_element("axis.text.y", theme)$size, 18)
+
+  labels <- suppressMessages(
+    ggplot2::ggplot_build(out)$layout$panel_params[[1]]$x$get_labels()
+  )
+  expect_true(any(grepl("\n", labels, fixed = TRUE)))
+
+  # A continuous axis has no labels to wrap, and must not be broken by trying.
+  points <- quietly(plots_append(plots_init(),
+                                 ggplot2::ggplot(mtcars, ggplot2::aes(wt, mpg)) +
+                                   ggplot2::geom_point(),
+                                 name = "b", show = FALSE))
+  expect_s3_class(plots_pull(plots_set(points, "b", axis_text_wrap = 10, show = FALSE), 1),
+                  "ggplot")
+})
+
+test_that("a size change keeps the kind of element a title is drawn with", {
+  skip_if_not_installed("ggtext")
+  boxed <- titled + ggplot2::theme(
+    plot.title = ggtext::element_textbox_simple(size = 14)
+  )
+  plots <- quietly(plots_append(plots_init(), boxed, name = "a", show = FALSE))
+  out <- plots_pull(plots_set(plots, "a", title_size = 30, show = FALSE), 1)
+
+  # Replacing it outright is an error in ggplot2, so it must be changed in place.
+  element <- ggplot2::calc_element("plot.title", ggplot2::complete_theme(out$theme))
+  expect_s3_class(element, "element_textbox")
+  expect_equal(element$size, 30)
 })
 
 test_that("a customizer can be extended rather than replaced", {

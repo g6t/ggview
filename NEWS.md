@@ -2,7 +2,8 @@
 * Added a plots collection — `plots_init()` and friends — for keeping many plots together with
   the canvas each one is drawn at and the changes made to them. A change is stored beside the
   plot rather than written into it, and `customizer()` declares what a given plot lets people
-  change, so a program can build a control for each parameter. See `vignette("plots")`.
+  change, so a program can build a control for each parameter. Out of the box that covers the
+  labels, their sizes, the axis text, the legend and the gridlines. See `vignette("plots")`.
 * Printing a plot that has a `canvas()` no longer fails where there is no viewer. It draws the
   ordinary way instead, so a ggview plot can appear in a knitted document. `save_ggplot()` still
   uses the canvas.

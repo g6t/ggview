@@ -171,8 +171,8 @@ plots <- plots_append(plots, weight, name = "Engine/weight", type = "point",
 plots_params(plots, "Engine/weight")
 ```
 
-Four parameters where there were eight — this customizer offers a title and not
-the rest of the labels — but one of them is a color per cylinder count, which the
+Two parameters where the default offered seventeen — this one drops all the
+labels but the title — yet one of them is a color per cylinder count, which the
 default could never reach.
 
 ```{r, fig.width = 7, fig.height = 4}
