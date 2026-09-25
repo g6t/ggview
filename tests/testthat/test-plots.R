@@ -235,10 +235,10 @@ test_that("a customizer must be able to travel", {
   expect_error(customizer("nope", function(plot) list()), "must be a function")
   expect_error(customizer(function() NULL, function(plot) list()), "first argument")
 
-  # Nowhere to be found: it would fail wherever the customizer is read.
-  missing_var <- function(plot, a = NULL) paste(plot, no_such_object)
-  environment(missing_var) <- globalenv()
-  expect_error(customizer(missing_var, function(plot) list()), "does not define")
+  # Bound nowhere: usually a data column, as in `aes(fill = brand)`, so it is allowed.
+  column_ref <- function(plot, a = NULL) plot + ggplot2::aes(fill = brand)
+  environment(column_ref) <- globalenv()
+  expect_s3_class(customizer(column_ref, function(plot) list()), "plots_customizer")
 
   # Found only in the session that wrote it: the same problem, later.
   assign("a_session_object", "gone tomorrow", envir = globalenv())
@@ -580,4 +580,107 @@ test_that("printing lists the collection and its parameters", {
     print(plots_dims(heatmap = c(18, 11)))
     print(customizer_default())
   })
+})
+
+test_that("an extension of an extension still reaches the base parameters", {
+  one <- customizer_extend(customizer_default(),
+                           apply = function(plot, note = NULL) {
+                             if (is.null(note)) plot else plot + ggplot2::labs(tag = note)
+                           },
+                           params = function(plot) list(note = param_text("Note")))
+  two <- customizer_extend(one,
+                           apply = function(plot, title = NULL, alt = NULL) {
+                             if (is.null(title)) return(plot)
+                             plot + ggplot2::labs(title = toupper(title))
+                           },
+                           params = function(plot) list(title = param_text("Title"),
+                                                        alt = param_text("Alt")))
+  expect_true(all(c("title", "subtitle", "note", "alt") %in% two$keys))
+
+  plots <- quietly(plots_append(plots_init(customizer = two), titled, name = "a",
+                                show = FALSE))
+  out <- plots_pull(plots_set(plots, "a", title = "new", subtitle = "Sub", note = "N",
+                              show = FALSE), 1)
+  expect_equal(out$labels$title, "NEW")      # the added parameter shadows the base one
+  expect_equal(out$labels$subtitle, "Sub")   # the base of the base still applies
+  expect_equal(out$labels$tag, "N")
+})
+
+test_that("the collection keeps a plot's resolution and background", {
+  plots <- quietly(plots_append(plots_init(),
+                                p + canvas(5, 4, dpi = 150, bg = "transparent", scale = 2),
+                                name = "a", show = FALSE))
+  out <- plots_pull(plots_set(plots, "a", width = 8, show = FALSE), 1)
+  expect_equal(out$canvas$width, 8)
+  expect_equal(out$canvas$dpi, 150)
+  expect_equal(out$canvas$bg, "transparent")
+  expect_equal(out$canvas$scale, 2)
+})
+
+test_that("wrapping keeps what the plot's own scale set", {
+  answers <- data.frame(k = c("very satisfied overall", "not at all"), v = 1:2)
+  bars <- ggplot2::ggplot(answers, ggplot2::aes(k, v)) + ggplot2::geom_col() +
+    ggplot2::scale_x_discrete(position = "top", expand = ggplot2::expansion(add = 2),
+                              labels = toupper)
+  plots <- quietly(plots_append(plots_init(), bars, name = "a", show = FALSE))
+  out <- plots_pull(plots_set(plots, "a", axis_text_wrap = 10, show = FALSE), 1)
+  scale <- out$scales$get_scales("x")
+  expect_equal(scale$position, "top")
+  expect_false(inherits(scale$expand, "waiver"))
+  labels <- scale$labels(c("very satisfied overall"))
+  expect_true(grepl("\n", labels, fixed = TRUE))
+  expect_equal(labels, toupper(labels))
+})
+
+test_that("showing a grid brings back only its major lines", {
+  plain <- p + ggplot2::theme_minimal() +
+    ggplot2::theme(panel.grid.minor = ggplot2::element_blank(),
+                   panel.grid.major.y = ggplot2::element_blank())
+  plots <- quietly(plots_append(plots_init(), plain, name = "a", y_grid = TRUE, show = FALSE))
+  theme <- ggplot2::complete_theme(plots_pull(plots, 1)$theme)
+  expect_false(inherits(ggplot2::calc_element("panel.grid.major.y", theme), "element_blank"))
+  expect_s3_class(ggplot2::calc_element("panel.grid.minor.y", theme), "element_blank")
+})
+
+test_that("the overall text size reaches elements with their own size", {
+  sized <- titled + ggplot2::theme(axis.text = ggplot2::element_text(size = 10),
+                                   plot.title = ggplot2::element_text(size = 20),
+                                   text = ggplot2::element_text(size = 10))
+  plots <- quietly(plots_append(plots_init(), sized, name = "a", show = FALSE))
+  size_of <- function(plot, element) {
+    ggplot2::calc_element(element, ggplot2::complete_theme(plot$theme))$size
+  }
+  out <- plots_pull(plots_set(plots, "a", text_size = 20, show = FALSE), 1)
+  expect_equal(size_of(out, "plot.title"), 40)
+  expect_equal(size_of(out, "axis.text"), 20)
+
+  # A specific size given with it wins.
+  out <- plots_pull(plots_set(plots, "a", text_size = 20, title_size = 25, show = FALSE), 1)
+  expect_equal(size_of(out, "plot.title"), 25)
+})
+
+test_that("adding a plot again keeps the changes recorded against it", {
+  plots <- quietly(plots_append(plots_init(), titled, name = "a", show = FALSE))
+  plots <- plots_set(plots, "a", title = "Kept", width = 7, show = FALSE)
+  again <- quietly(plots_append(plots, titled, name = "a", show = FALSE))
+  expect_equal(plots_pull(again, 1)$labels$title, "Kept")
+  expect_equal(plots_pull(again, 1)$canvas$width, 7)
+
+  # `...` replaces a change of the same name.
+  again <- quietly(plots_append(plots, titled, name = "a", title = "New", show = FALSE))
+  expect_equal(plots_pull(again, 1)$labels$title, "New")
+
+  # A change the new plot's customizer no longer offers is dropped, with a warning.
+  bare <- customizer(function(plot, other = NULL) plot,
+                     function(plot) list(other = param_text("Other")))
+  expect_message(plots_append(plots, titled, name = "a", customizer = bare, show = FALSE),
+                 "Dropped 1 change")
+})
+
+test_that("a failing customizer names the plot", {
+  boom <- customizer(function(plot, z = NULL) stop("boom"),
+                     function(plot) list(z = param_text("Z")))
+  plots <- quietly(plots_append(plots_init(customizer = boom), p, name = "Module/bad",
+                                z = "go", show = FALSE))
+  expect_error(plots_pull(plots, 1), "Module/bad")
 })

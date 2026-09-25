@@ -47,14 +47,15 @@ plots_reserved <- c("width", "height")
 customizer <- function(apply, params) {
   check_customizer_fun(apply, "apply")
   check_customizer_fun(params, "params")
-  check_reserved(names(formals(apply))[-1])
-  structure(list(apply = apply, params = params), class = "plots_customizer")
+  keys <- names(formals(apply))[-1]
+  check_reserved(keys)
+  structure(list(apply = apply, params = params, keys = keys), class = "plots_customizer")
 }
 
 #' @export
 print.plots_customizer <- function(x, ...) {
   cli::cli_rule(left = "{.cls plots_customizer}")
-  names <- customizer_names(x)
+  names <- x$keys
   if (identical(names, "...")) names <- "set by the plot"
   cli::cli_verbatim(paste0("  parameters: ", paste(names, collapse = ", ")))
   invisible(x)
@@ -64,8 +65,13 @@ print.plots_customizer <- function(x, ...) {
 #' @description Offers what any plot has, whatever it draws: its title,
 #'   subtitle, footnote and axis titles, the size of each of those, the size and
 #'   line wrapping of the axis text, the overall text size, where the legend sits
-#'   and which way it runs, and whether the gridlines show. Each one defaults to what the plot already carries, `NA`
-#'   leaves it alone, and not mentioning it changes nothing.
+#'   and which way it runs, and whether the gridlines show. Each one defaults to
+#'   what the plot already carries, `NA` leaves it alone, and not mentioning it
+#'   changes nothing.
+#'
+#'   The overall text size scales every text size the theme sets in points by
+#'   the same ratio, so it works on a complete theme too. A specific size given
+#'   with it wins. Showing a grid brings back its major lines only.
 #'
 #'   Sizes are changed in place, so a title drawn as a `ggtext` textbox stays a
 #'   textbox. Replacing it outright is an error in ggplot2, not a silent loss.
@@ -110,9 +116,10 @@ customize_labels <- function(plot,
     plot <- plot + do.call(ggplot2::labs, labels)
   }
 
+  # The overall size first, so a specific size given alongside it wins.
+  if (given(text_size)) plot <- text_resize(plot, text_size)
   sizes <- list(title_size = title_size, subtitle_size = subtitle_size,
-                caption_size = caption_size, x_size = x_size, y_size = y_size,
-                text_size = text_size)
+                caption_size = caption_size, x_size = x_size, y_size = y_size)
   for (key in names(sizes)) {
     if (given(sizes[[key]])) plot <- element_resize(plot, size_elements[[key]], sizes[[key]])
   }
@@ -129,13 +136,14 @@ customize_labels <- function(plot,
   settings <- list()
   if (given(legend)) settings$legend.position <- legend
   if (given(legend_direction)) settings$legend.direction <- legend_direction
+  # Showing a grid brings back its major lines only. Hiding it hides both.
   if (given(x_grid)) {
     settings$panel.grid.major.x <- grid_element(x_grid)
-    settings$panel.grid.minor.x <- grid_element(x_grid)
+    if (!x_grid) settings$panel.grid.minor.x <- ggplot2::element_blank()
   }
   if (given(y_grid)) {
     settings$panel.grid.major.y <- grid_element(y_grid)
-    settings$panel.grid.minor.y <- grid_element(y_grid)
+    if (!y_grid) settings$panel.grid.minor.y <- ggplot2::element_blank()
   }
   if (length(settings)) plot <- plot + do.call(ggplot2::theme, settings)
 
@@ -199,19 +207,50 @@ element_resize <- function(plot, name, size) {
   plot + do.call(ggplot2::theme, stats::setNames(list(element), name))
 }
 
-# Break a discrete axis's labels over several lines. Only the axis that carries
-# them is touched, and the scale's own name, limits and breaks are carried across,
-# because replacing a scale otherwise drops them.
-wrap_axis <- function(plot, aesthetic, width) {
-  built <- suppressMessages(ggplot2::ggplot_build(plot))
-  scale <- built$plot$scales$get_scales(aesthetic)
-  if (is.null(scale) || !isTRUE(scale$is_discrete())) return(plot)
+# Change the overall text size. A theme that gives an element its own size in
+# points would ignore the root `text` element, so every such size is scaled by the
+# same ratio. Sizes given as `rel()` follow the root on their own.
+text_resize <- function(plot, size) {
+  current <- element_size(plot_theme(plot), "text")
+  plot <- element_resize(plot, "text", size)
+  if (is.null(current) || current <= 0) return(plot)
+  ratio <- size / current
+  own <- vapply(plot$theme, function(element) {
+    inherits(element, "element_text") && is.numeric(element$size) &&
+      !inherits(element$size, "rel")
+  }, logical(1))
+  for (name in setdiff(names(plot$theme)[own], "text")) {
+    plot <- element_resize(plot, name, plot$theme[[name]]$size * ratio)
+  }
+  plot
+}
 
-  build <- if (aesthetic == "x") ggplot2::scale_x_discrete else ggplot2::scale_y_discrete
-  suppressMessages(
-    plot + build(labels = wrap_labels(width), name = scale$name,
-                 limits = scale$limits, breaks = scale$breaks)
-  )
+# Break a discrete axis's labels over several lines. A scale the plot sets itself
+# is copied and keeps everything it had (position, expansion, its own labels); only
+# its labels are wrapped. Without one, the plot is built once to learn whether the
+# axis is discrete at all.
+wrap_axis <- function(plot, aesthetic, width) {
+  scale <- plot$scales$get_scales(aesthetic)
+  if (is.null(scale)) {
+    built <- suppressMessages(ggplot2::ggplot_build(plot))
+    trained <- built$plot$scales$get_scales(aesthetic)
+    if (is.null(trained) || !isTRUE(trained$is_discrete())) return(plot)
+    build <- if (aesthetic == "x") ggplot2::scale_x_discrete else ggplot2::scale_y_discrete
+    return(suppressMessages(plot + build(labels = wrap_labels(width))))
+  }
+  if (!isTRUE(scale$is_discrete())) return(plot)
+
+  scale <- scale$clone()
+  wrap <- wrap_labels(width)
+  own <- scale$labels
+  scale$labels <- if (is.function(own)) {
+    function(x) wrap(own(x))
+  } else if (is.character(own)) {
+    stats::setNames(wrap(own), names(own))
+  } else {
+    wrap
+  }
+  suppressMessages(plot + scale)
 }
 
 wrap_labels <- function(width) {
@@ -282,14 +321,15 @@ grid_shown <- function(theme, axis) {
 customizer_extend <- function(base, apply, params) {
   check_customizer(base)
   added <- customizer(apply, params)
-  base_names <- names(formals(base$apply))[-1]
 
-  customizer(
+  # A value goes to whichever customizer offers it, and to the added one when both
+  # do, because the added parameter shadows the base one.
+  out <- customizer(
     apply = function(plot, ...) {
       values <- list(...)
-      theirs <- intersect(names(values), base_names)
-      plot <- do.call(base$apply, c(list(plot), values[theirs]))
-      do.call(added$apply, c(list(plot), values[setdiff(names(values), theirs)]))
+      mine <- intersect(names(values), added$keys)
+      plot <- do.call(base$apply, c(list(plot), values[setdiff(names(values), mine)]))
+      do.call(added$apply, c(list(plot), values[mine]))
     },
     params = function(plot) {
       mine <- added$params(plot)
@@ -297,6 +337,8 @@ customizer_extend <- function(base, apply, params) {
       c(theirs[setdiff(names(theirs), names(mine))], mine)
     }
   )
+  out$keys <- union(base$keys, added$keys)
+  out
 }
 
 #' @title Parameters a customizer offers
@@ -486,11 +528,11 @@ check_customizer_fun <- function(fun, arg, call = parent.frame()) {
   globals <- codetools::findGlobals(fun, merge = FALSE)
   env <- environment(fun)
   where <- function(names) vapply(names, binding_of, character(1), env)
-  # A value that is nowhere to be found is already broken. A function that is
-  # nowhere is usually a package that simply is not attached right now, and it
-  # will be wherever the plot is drawn, so only a session-local one is a risk.
+  # Only a name that lives in the writing session is a risk. A name bound nowhere is
+  # usually a data column (`aes(fill = brand)`, `filter(brand == ...)`), and a
+  # function bound nowhere is a package that is not attached right now.
   risky <- c(
-    globals$variables[where(globals$variables) %in% c("session", "nowhere")],
+    globals$variables[where(globals$variables) == "session"],
     globals$functions[where(globals$functions) == "session"]
   )
   if (length(risky)) {
@@ -563,11 +605,6 @@ check_reserved <- function(names, call = parent.frame()) {
     )
   }
   invisible(names)
-}
-
-# Parameter names without a plot to ask about, for printing a customizer.
-customizer_names <- function(customizer) {
-  names(formals(customizer$apply))[-1]
 }
 
 legend_position <- function(plot) theme_string(plot, "legend.position")

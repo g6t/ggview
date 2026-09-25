@@ -13,8 +13,13 @@ A customizer.
 Offers what any plot has, whatever it draws: its title,
 subtitle, footnote and axis titles, the size of each of those, the size and
 line wrapping of the axis text, the overall text size, where the legend sits
-and which way it runs, and whether the gridlines show. Each one defaults to what the plot already carries, \code{NA}
-leaves it alone, and not mentioning it changes nothing.
+and which way it runs, and whether the gridlines show. Each one defaults to
+what the plot already carries, \code{NA} leaves it alone, and not mentioning it
+changes nothing.
+
+The overall text size scales every text size the theme sets in points by
+the same ratio, so it works on a complete theme too. A specific size given
+with it wins. Showing a grid brings back its major lines only.
 
 Sizes are changed in place, so a title drawn as a \code{ggtext} textbox stays a
 textbox. Replacing it outright is an error in ggplot2, not a silent loss.

@@ -74,7 +74,9 @@ plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
 #' @description Adds one plot to the end of a collection. The plot is stored as
 #'   it is: anything given in `...` is kept beside it as a change, not written
 #'   into it. Adding a name that is already in the collection updates that row
-#'   in place and keeps its `id`, so re-running a chunk is safe.
+#'   in place and keeps its `id` and the changes recorded against it, so
+#'   re-running a chunk is safe. A change the new plot no longer accepts is
+#'   dropped, and `...` replaces a change of the same name.
 #'
 #' @param plots A collection, from [plots_init()].
 #' @param plot A ggplot object.
@@ -147,6 +149,9 @@ plots_append <- function(plots, plot, name, type = NA_character_,
     verb <- "Added"
   } else {
     row$id <- plots$id[[i]]
+    kept <- values_still_valid(plots$values[[i]], customizer, plot, row$width, row$height)
+    kept <- kept[setdiff(names(kept), names(values))]
+    row$values <- list(c(kept, values))
     out <- plots
     out[i, ] <- row
     verb <- "Updated"
@@ -209,7 +214,16 @@ plots_pull <- function(plots, i) {
   changes <- values[setdiff(names(values), plots_reserved)]
 
   if (length(changes)) {
-    plot <- do.call(plots$customizer[[i]]$apply, c(list(plot), changes))
+    plot <- tryCatch(
+      do.call(plots$customizer[[i]]$apply, c(list(plot), changes)),
+      error = function(e) {
+        cli::cli_abort(
+          c("The customizer for {.val {plots$name[[i]]}} failed.",
+            "i" = "Changes applied: {.val {names(changes)}}."),
+          parent = e, call = NULL
+        )
+      }
+    )
     if (!inherits(plot, "ggplot")) {
       cli::cli_abort(c(
         "The customizer for {.val {plots$name[[i]]}} did not return a plot.",
@@ -230,7 +244,11 @@ plots_pull <- function(plots, i) {
       ))
     }
   }
-  plot + canvas(width = size$width, height = size$height)
+  # The collection owns the size. Resolution, scale and background stay as the
+  # plot's own canvas set them.
+  own <- plot$canvas
+  plot + canvas(width = size$width, height = size$height,
+                dpi = own$dpi %||% 300, scale = own$scale %||% 1, bg = own$bg %||% "white")
 }
 
 # "bar, 15 x 9 in", for the messages.
@@ -820,6 +838,25 @@ check_values <- function(values, customizer, plot, geometry = list(),
     values[[key]] <- value
   }
   values
+}
+
+# The recorded changes a replacement plot still accepts. A change it no longer
+# takes (a parameter gone, a key no longer on the plot) is dropped, and said so.
+values_still_valid <- function(values, customizer, plot, width, height) {
+  if (!length(values)) return(list())
+  params <- c(customizer_params(customizer, plot), geometry_params(width, height))
+  ok <- vapply(names(values), function(key) {
+    !is.null(params[[key]]) &&
+      !inherits(try(param_check(params[[key]], values[[key]], key), silent = TRUE),
+                "try-error")
+  }, logical(1))
+  if (!all(ok)) {
+    dropped <- names(values)[!ok]
+    cli::cli_alert_warning(
+      "Dropped {length(dropped)} change{?s} the new plot no longer takes: {.val {dropped}}."
+    )
+  }
+  values[ok]
 }
 
 # --- small helpers -----------------------------------------------------------

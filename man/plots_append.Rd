@@ -47,7 +47,9 @@ The collection, with the plot added.
 Adds one plot to the end of a collection. The plot is stored as
 it is: anything given in \code{...} is kept beside it as a change, not written
 into it. Adding a name that is already in the collection updates that row
-in place and keeps its \code{id}, so re-running a chunk is safe.
+in place and keeps its \code{id} and the changes recorded against it, so
+re-running a chunk is safe. A change the new plot no longer accepts is
+dropped, and \code{...} replaces a change of the same name.
 }
 \examples{
 library(ggplot2)
