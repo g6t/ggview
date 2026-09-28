@@ -1,34 +1,4 @@
-# Taking a whole collection out: as a list, as files, as a gallery.
-
-#' @title Every plot in a collection, as a list
-#' @description Returns the whole collection as a named list of plots, each one
-#'   ready to render: its labels and its canvas size are applied, exactly as
-#'   [plots_get()] does for a single plot. The names are the plot names.
-#'
-#'   `lapply()` and `sapply()` take a list through `as.list()`, so on a
-#'   collection they walk its plots and not its columns.
-#'
-#' @param x A collection, from [plots_init()].
-#' @param ... Not used.
-#'
-#' @return A named list of ggplot objects.
-#'
-#' @examples
-#' library(ggplot2)
-#' p <- ggplot(mtcars, aes(wt, mpg)) + geom_point()
-#'
-#' plots <- plots_init()
-#' plots <- plots_append(plots, p, name = "scatter", show = FALSE)
-#' plots <- plots_append(plots, p + geom_smooth(), name = "trend", show = FALSE)
-#'
-#' names(as.list(plots))
-#'
-#' @export
-as.list.plots_tbl <- function(x, ...) {
-  check_plots(x)
-  out <- lapply(seq_len(nrow(x)), function(i) plots_pull(x, i))
-  stats::setNames(out, x$name)
-}
+# Taking a whole collection out: as files, as a content table, as a gallery.
 
 #' @title Save every plot in a collection
 #' @description Writes one file per plot, each at its own canvas size. Slashes
@@ -124,7 +94,7 @@ plots_as_content <- function(plots, path = "plots", extension = "png") {
   # Bulk writers read the path from the names of `name`, so it carries it twice.
   full_names <- file.path(path, paste0(plots$name, ".", extension))
   tibble::tibble(
-    object = unname(as.list(plots)),
+    object = lapply(seq_len(nrow(plots)), function(i) plots_pull(plots, i)),
     name   = stats::setNames(full_names, full_names),
     type   = extension
   )

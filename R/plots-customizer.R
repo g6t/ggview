@@ -18,6 +18,11 @@ plots_reserved <- c("width", "height")
 #'   A customizer may rebuild a plot from its data rather than add to it, so
 #'   what it can offer is not limited to what `ggplot2` lets you add on top.
 #'
+#'   Give it to [plots_init()] under a name, once, and let each plot name the
+#'   customizer it uses. It can call any function the collection carries in
+#'   `functions`. Anything else it uses must come with it: a package function,
+#'   or a value it captured.
+#'
 #' @param apply A function whose first argument is the plot. Its other
 #'   arguments are the parameters, and each one must default to `NULL`, meaning
 #'   "leave this alone". It returns a ggplot.
@@ -26,7 +31,8 @@ plots_reserved <- c("width", "height")
 #'
 #' @return A customizer.
 #'
-#' @seealso [customizer_default()], [param_text()], [plots_params()].
+#' @seealso [customizer_default()], [customizer_extend()], [param_text()],
+#'   [plots_params()].
 #'
 #' @examples
 #' library(ggplot2)
@@ -49,15 +55,30 @@ customizer <- function(apply, params) {
   check_customizer_fun(params, "params")
   keys <- names(formals(apply))[-1]
   check_reserved(keys)
-  structure(list(apply = apply, params = params, keys = keys), class = "plots_customizer")
+  # A source record can carry the whole source of the package that made the
+  # function, so a saved collection would carry it too.
+  new_customizer(list(list(
+    apply = utils::removeSource(apply), params = utils::removeSource(params), keys = keys
+  )))
+}
+
+# A customizer is a stack of layers, each an `apply`, a `params` and the keys
+# its `apply` takes. Extending one adds a layer, so no function has to hold
+# another customizer to call it.
+new_customizer <- function(layers) {
+  structure(list(layers = layers), class = "plots_customizer")
+}
+
+customizer_keys <- function(customizer) {
+  unique(unlist(lapply(customizer$layers, function(layer) layer$keys)))
 }
 
 #' @export
 print.plots_customizer <- function(x, ...) {
   cli::cli_rule(left = "{.cls plots_customizer}")
-  names <- x$keys
-  if (identical(names, "...")) names <- "set by the plot"
-  cli::cli_verbatim(paste0("  parameters: ", paste(names, collapse = ", ")))
+  keys <- customizer_keys(x)
+  keys[keys == "..."] <- "set by the plot"
+  cli::cli_verbatim(paste0("  parameters: ", paste(keys, collapse = ", ")))
   invisible(x)
 }
 
@@ -298,7 +319,8 @@ grid_shown <- function(theme, axis) {
 #'   [customizer_default()] while adding something of your own, rather than
 #'   listing them again.
 #'
-#'   A parameter of the same name replaces the one it shadows.
+#'   A parameter of the same name replaces the one it shadows: a change goes to
+#'   the last layer that takes it.
 #'
 #' @param base The customizer to build on, usually [customizer_default()].
 #' @inheritParams customizer
@@ -320,25 +342,27 @@ grid_shown <- function(theme, axis) {
 #' @export
 customizer_extend <- function(base, apply, params) {
   check_customizer(base)
-  added <- customizer(apply, params)
+  new_customizer(c(base$layers, customizer(apply, params)$layers))
+}
 
-  # A value goes to whichever customizer offers it, and to the added one when both
-  # do, because the added parameter shadows the base one.
-  out <- customizer(
-    apply = function(plot, ...) {
-      values <- list(...)
-      mine <- intersect(names(values), added$keys)
-      plot <- do.call(base$apply, c(list(plot), values[setdiff(names(values), mine)]))
-      do.call(added$apply, c(list(plot), values[mine]))
-    },
-    params = function(plot) {
-      mine <- added$params(plot)
-      theirs <- base$params(plot)
-      c(theirs[setdiff(names(theirs), names(mine))], mine)
-    }
-  )
-  out$keys <- union(base$keys, added$keys)
-  out
+# Apply changes layer by layer. Each change goes to the last layer that takes
+# it, so an added parameter shadows the one it replaces.
+customizer_apply <- function(customizer, plot, values) {
+  layers <- customizer$layers
+  owner <- vapply(names(values), function(key) {
+    takes <- vapply(layers, function(layer) any(c(key, "...") %in% layer$keys), logical(1))
+    if (any(takes)) max(which(takes)) else NA_integer_
+  }, integer(1))
+  if (anyNA(owner)) {
+    cli::cli_abort(c(
+      "No {.arg apply} of this customizer takes {.val {names(values)[is.na(owner)]}}.",
+      "i" = "Its {.arg params} offers {?it/them}, so its {.arg apply} must take {?it/them} too."
+    ), call = NULL)
+  }
+  for (j in seq_along(layers)) {
+    plot <- do.call(layers[[j]]$apply, c(list(plot), values[owner == j]))
+  }
+  plot
 }
 
 #' @title Parameters a customizer offers
@@ -516,32 +540,34 @@ is_color <- function(x) {
 
 # --- checks ------------------------------------------------------------------
 
-# A customizer must survive being saved and read back somewhere else, so it may
-# not reach for anything that only exists in the session that wrote it.
 check_customizer_fun <- function(fun, arg, call = parent.frame()) {
-  if (!is.function(fun)) {
+  if (!is.function(fun) || is.primitive(fun)) {
     cli::cli_abort("{.arg {arg}} must be a function.", call = call)
   }
   if (!length(formals(fun))) {
     cli::cli_abort("{.arg {arg}} must take the plot as its first argument.", call = call)
   }
+  invisible(fun)
+}
+
+# A collection is read back in another session, so what it carries may not reach
+# for anything that only exists in the session that wrote it. The collection's
+# own functions travel with it, so their names are `known`.
+check_travels <- function(fun, what, known = character(), call = parent.frame()) {
   globals <- codetools::findGlobals(fun, merge = FALSE)
+  names <- setdiff(c(globals$variables, globals$functions), known)
   env <- environment(fun)
-  where <- function(names) vapply(names, binding_of, character(1), env)
   # Only a name that lives in the writing session is a risk. A name bound nowhere is
   # usually a data column (`aes(fill = brand)`, `filter(brand == ...)`), and a
   # function bound nowhere is a package that is not attached right now.
-  risky <- c(
-    globals$variables[where(globals$variables) == "session"],
-    globals$functions[where(globals$functions) == "session"]
-  )
+  risky <- names[vapply(names, binding_of, character(1), env) == "session"]
   if (length(risky)) {
     cli::cli_abort(
       c(
-        "{.arg {arg}} uses {length(risky)} name{?s} it does not define: {.val {risky}}.",
-        "i" = "A customizer is read back in another session, where that is gone.",
-        "i" = "Pass it in as a parameter, or capture it in a function that builds the
-               customizer."
+        "{what} uses {length(risky)} name{?s} from this session: {.val {risky}}.",
+        "i" = "A collection is read back in another session, where that is gone.",
+        "i" = "Give a function to {.arg functions} in {.fn plots_init}, or pass a value in
+               as a parameter."
       ),
       call = call
     )
@@ -576,22 +602,45 @@ check_customizer <- function(customizer, call = parent.frame()) {
   invisible(customizer)
 }
 
-# The parameters a customizer offers for one plot, checked on the way out.
+# The parameters a customizer offers for one plot, checked on the way out. A
+# later layer's parameter replaces an earlier one of the same name.
 customizer_params <- function(customizer, plot, call = parent.frame()) {
-  params <- customizer$params(plot)
-  if (!is.list(params) || (length(params) && !length(names(params)))) {
-    cli::cli_abort("A customizer's {.arg params} must return a named list.", call = call)
-  }
-  wrong <- !vapply(params, inherits, logical(1), "plots_param")
-  if (any(wrong)) {
-    cli::cli_abort(
-      c("A customizer's {.arg params} must hold {.fn param_text} and friends.",
-        "x" = "{.val {names(params)[wrong]}} {?is/are} something else."),
-      call = call
-    )
+  params <- list()
+  for (layer in customizer$layers) {
+    mine <- layer$params(plot)
+    if (!is.list(mine) || (length(mine) && !length(names(mine)))) {
+      cli::cli_abort("A customizer's {.arg params} must return a named list.", call = call)
+    }
+    wrong <- !vapply(mine, inherits, logical(1), "plots_param")
+    if (any(wrong)) {
+      cli::cli_abort(
+        c("A customizer's {.arg params} must hold {.fn param_text} and friends.",
+          "x" = "{.val {names(mine)[wrong]}} {?is/are} something else."),
+        call = call
+      )
+    }
+    params <- c(params[setdiff(names(params), names(mine))], mine)
   }
   check_reserved(names(params), call = call)
   params
+}
+
+# A customizer whose functions see the collection's functions, found before
+# anything they captured themselves. The functions see each other the same way.
+bind_functions <- function(customizer, functions) {
+  if (!length(functions)) return(customizer)
+  bind <- function(fun) {
+    env <- list2env(functions, parent = environment(fun))
+    for (name in names(functions)) environment(env[[name]]) <- env
+    environment(fun) <- env
+    fun
+  }
+  customizer$layers <- lapply(customizer$layers, function(layer) {
+    layer$apply <- bind(layer$apply)
+    layer$params <- bind(layer$params)
+    layer
+  })
+  customizer
 }
 
 # The collection owns the canvas, so a customizer may not offer it.

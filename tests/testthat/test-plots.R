@@ -4,6 +4,8 @@ titled <- p + ggplot2::labs(title = "Title", subtitle = "Subtitle", caption = "C
 
 quietly <- function(expr) suppressMessages(expr)
 
+using <- function(customizer) plots_init(customizers = list(default = customizer))
+
 two_plots <- function() {
   quietly({
     plots <- plots_init(name = "Test bundle")
@@ -23,13 +25,16 @@ test_that("a new collection is empty and keeps what it was given", {
     c("id", "name", "type", "width", "height", "plot", "customizer", "values")
   )
   expect_equal(plots_meta(plots), list(name = "Bundle", description = "One line",
-                                       plots = 0L, version = 1L))
+                                       plots = 0L, customizers = "default",
+                                       functions = NULL))
 
   wide <- plots_init(dims = plots_dims(heatmap = c(18, 11)))
   expect_equal(plots_meta_raw(wide)$dims$heatmap, c(18, 11))
 
   expect_error(plots_init(dims = list(bar = c(1, 1))), "plots_dims")
-  expect_error(plots_init(customizer = "nope"), "customizer")
+  expect_error(plots_init(customizers = list(a = "nope")), "must hold customizers")
+  expect_error(plots_init(customizers = list(customizer_default())), "name of its own")
+  expect_error(plots_init(functions = list(f = 1)), "must hold functions")
   expect_error(plots_init(name = c("a", "b")), "single string")
 })
 
@@ -231,44 +236,104 @@ test_that("a name may not have an empty folder", {
   }
 })
 
-test_that("a customizer must be able to travel", {
+test_that("what a collection carries must be able to travel", {
   expect_error(customizer("nope", function(plot) list()), "must be a function")
   expect_error(customizer(function() NULL, function(plot) list()), "first argument")
+  carries <- function(apply) {
+    plots_init(customizers = list(x = customizer(apply, function(plot) list())))
+  }
 
   # Bound nowhere: usually a data column, as in `aes(fill = brand)`, so it is allowed.
   column_ref <- function(plot, a = NULL) plot + ggplot2::aes(fill = brand)
   environment(column_ref) <- globalenv()
-  expect_s3_class(customizer(column_ref, function(plot) list()), "plots_customizer")
+  expect_s3_class(carries(column_ref), "plots_tbl")
 
   # Found only in the session that wrote it: the same problem, later.
   assign("a_session_object", "gone tomorrow", envir = globalenv())
   on.exit(rm("a_session_object", envir = globalenv()), add = TRUE)
   session_var <- function(plot, a = NULL) paste(plot, a_session_object)
   environment(session_var) <- globalenv()
-  expect_error(customizer(session_var, function(plot) list()), "does not define")
+  expect_error(carries(session_var), "from this session")
 
   # A function it does not define is the same problem: it would not be found.
   assign("a_project_builder", function(x) x, envir = globalenv())
   on.exit(rm("a_project_builder", envir = globalenv()), add = TRUE)
   calls_global <- function(plot, a = NULL) a_project_builder(plot)
   environment(calls_global) <- globalenv()
-  expect_error(customizer(calls_global, function(plot) list()), "does not define")
+  expect_error(carries(calls_global), "a_project_builder")
+
+  # Unless the collection carries it too.
+  expect_s3_class(
+    plots_init(customizers = list(x = customizer(calls_global, function(plot) list())),
+               functions = list(a_project_builder = function(x) x)),
+    "plots_tbl"
+  )
+  # And a function it carries is checked the same way.
+  helper <- function(x) a_project_builder(x)
+  environment(helper) <- globalenv()
+  expect_error(plots_init(functions = list(helper = helper)), "Function .helper.")
 
   # Calling a package's function, either way round, is not.
   qualified <- function(plot, a = NULL) ggplot2::labs(title = a)
   bare <- function(plot, a = NULL) labs(title = a)
   environment(qualified) <- globalenv()
   environment(bare) <- globalenv()
-  expect_s3_class(customizer(qualified, function(plot) list()), "plots_customizer")
-  expect_s3_class(customizer(bare, function(plot) list()), "plots_customizer")
+  expect_s3_class(carries(qualified), "plots_tbl")
+  expect_s3_class(carries(bare), "plots_tbl")
 
   # A package's own objects, and things the function holds itself, are fine.
-  expect_s3_class(customizer_default(), "plots_customizer")
   held <- local({
     inner <- "kept"
-    customizer(function(plot, a = NULL) paste(plot, inner), function(plot) list())
+    function(plot, a = NULL) paste(plot, inner)
   })
-  expect_s3_class(held, "plots_customizer")
+  expect_s3_class(carries(held), "plots_tbl")
+})
+
+test_that("customizers call the collection's functions", {
+  shout <- customizer_extend(
+    customizer_default(),
+    apply = function(plot, shout = NULL) {
+      if (is.null(shout)) plot else plot + ggplot2::labs(title = loud(shout))
+    },
+    params = function(plot) list(shout = param_text("Shout", default = loud("x")))
+  )
+  plots <- plots_init(
+    customizers = list(shout = shout),
+    # The functions see each other.
+    functions = list(loud = function(x) paste0(upper(x), "!"), upper = toupper)
+  )
+  expect_error(plots_append(plots, p, name = "a", customizer = "nope", show = FALSE),
+               "must name one of")
+
+  plots <- quietly(plots_append(plots, p, name = "a", customizer = "shout",
+                                shout = "hello", show = FALSE))
+  expect_equal(plots$customizer, "shout")
+  expect_equal(plots_params(plots, "a")$shout$default, "X!")
+  expect_equal(plots_pull(plots, 1)$labels$title, "HELLO!")
+  expect_equal(plots_meta(plots)$customizers, c("default", "shout"))
+
+  # And still do once the collection has been saved and read back.
+  file <- tempfile(fileext = ".rds")
+  saveRDS(plots, file)
+  back <- readRDS(file)
+  expect_equal(plots_pull(plots_set(back, "a", shout = "again", show = FALSE), 1)$labels$title,
+               "AGAIN!")
+})
+
+test_that("a stored customizer carries no source records", {
+  # A source record can drag the whole source of the package that made the
+  # function into every saved collection.
+  with_source <- eval(parse(text = "function(plot, note = NULL) plot", keep.source = TRUE))
+  expect_false(is.null(attr(with_source, "srcref")))
+  params <- function(plot) list(note = param_text("Note"))
+  # Away from the test's own plots, so the size below is the customizer's alone.
+  environment(with_source) <- environment(params) <- globalenv()
+  extended <- customizer_extend(customizer_default(), apply = with_source, params = params)
+  for (layer in extended$layers) {
+    expect_null(attr(layer$apply, "srcref"))
+    expect_null(attr(layer$params, "srcref"))
+  }
+  expect_lt(length(serialize(extended, NULL)), 200000)
 })
 
 test_that("a customizer may not take over the canvas", {
@@ -282,16 +347,14 @@ test_that("a customizer may not take over the canvas", {
     apply = function(plot, ...) plot,
     params = function(plot) list(width = param_number("Width"))
   )
-  plots <- quietly(plots_append(plots_init(), p, name = "a", customizer = sneaky,
-                                show = FALSE))
+  plots <- quietly(plots_append(using(sneaky), p, name = "a", show = FALSE))
   expect_error(plots_params(plots, "a"), "may not offer")
 
   wrong <- customizer(
     apply = function(plot, a = NULL) plot,
     params = function(plot) list(a = "not a parameter")
   )
-  plots <- quietly(plots_append(plots_init(), p, name = "a", customizer = wrong,
-                                show = FALSE))
+  plots <- quietly(plots_append(using(wrong), p, name = "a", show = FALSE))
   expect_error(plots_params(plots, "a"), "param_text")
 })
 
@@ -308,8 +371,7 @@ test_that("a custom customizer runs, and is checked", {
   dots <- ggplot2::ggplot(mtcars, ggplot2::aes(wt, mpg, color = factor(cyl))) +
     ggplot2::geom_point()
 
-  plots <- quietly(plots_append(plots_init(customizer = recolor), dots,
-                                name = "dots", show = FALSE))
+  plots <- quietly(plots_append(using(recolor), dots, name = "dots", show = FALSE))
   expect_equal(names(plots_params(plots, "dots")), c("colors", "width", "height"))
 
   plots <- plots_set(plots, "dots", colors = c("4" = "#36c8ef"))
@@ -322,8 +384,7 @@ test_that("a custom customizer runs, and is checked", {
   broken <- customizer(function(plot, a = NULL) "not a plot", function(plot) {
     list(a = param_text("A"))
   })
-  oops <- quietly(plots_append(plots_init(customizer = broken), p, name = "x",
-                               a = "go", show = FALSE))
+  oops <- quietly(plots_append(using(broken), p, name = "x", a = "go", show = FALSE))
   expect_error(plots_pull(oops, 1), "did not return a plot")
 })
 
@@ -407,8 +468,7 @@ test_that("a customizer can be extended rather than replaced", {
     },
     params = function(plot) list(note = param_text("Note"))
   )
-  plots <- quietly(plots_append(plots_init(customizer = extended), titled,
-                                name = "a", show = FALSE))
+  plots <- quietly(plots_append(using(extended), titled, name = "a", show = FALSE))
 
   expect_true(all(c("title", "note") %in% names(plots_params(plots, "a"))))
 
@@ -430,8 +490,7 @@ test_that("a mapping arrives whole, and can be labelled", {
                                   default = list(a = "#111111", b = "#222222")))
     }
   )
-  plots <- quietly(plots_append(plots_init(customizer = keyed), p, name = "x",
-                                show = FALSE))
+  plots <- quietly(plots_append(using(keyed), p, name = "x", show = FALSE))
 
   # One key changed, the rest kept.
   one <- plots_set(plots, "x", colors = c(a = "#36c8ef"))
@@ -479,16 +538,13 @@ test_that("dplyr verbs keep the class and the collection's details", {
   expect_s3_class(plots[1, ], "plots_tbl")
 })
 
-test_that("a collection turns into a list, content and files", {
+test_that("a collection turns into content and files", {
   plots <- plots_set(two_plots(), "Module 1/first", title = "Changed")
-
-  as_list <- as.list(plots)
-  expect_named(as_list, c("Module 1/first", "Module 1/second"))
-  expect_s3_class(as_list[[1]], "ggview")
-  expect_equal(as_list[[1]]$labels$title, "Changed")
 
   content <- plots_as_content(plots, path = "plots")
   expect_named(content, c("object", "name", "type"))
+  expect_s3_class(content$object[[1]], "ggview")
+  expect_equal(content$object[[1]]$labels$title, "Changed")
   expect_equal(content$name[[1]], "plots/Module 1/first.png")
   expect_equal(names(content$name), unname(content$name))
 
@@ -595,10 +651,9 @@ test_that("an extension of an extension still reaches the base parameters", {
                            },
                            params = function(plot) list(title = param_text("Title"),
                                                         alt = param_text("Alt")))
-  expect_true(all(c("title", "subtitle", "note", "alt") %in% two$keys))
+  expect_true(all(c("title", "subtitle", "note", "alt") %in% customizer_keys(two)))
 
-  plots <- quietly(plots_append(plots_init(customizer = two), titled, name = "a",
-                                show = FALSE))
+  plots <- quietly(plots_append(using(two), titled, name = "a", show = FALSE))
   out <- plots_pull(plots_set(plots, "a", title = "new", subtitle = "Sub", note = "N",
                               show = FALSE), 1)
   expect_equal(out$labels$title, "NEW")      # the added parameter shadows the base one
@@ -673,14 +728,17 @@ test_that("adding a plot again keeps the changes recorded against it", {
   # A change the new plot's customizer no longer offers is dropped, with a warning.
   bare <- customizer(function(plot, other = NULL) plot,
                      function(plot) list(other = param_text("Other")))
-  expect_message(plots_append(plots, titled, name = "a", customizer = bare, show = FALSE),
+  plots <- plots_init(customizers = list(bare = bare))
+  plots <- quietly(plots_append(plots, titled, name = "a", show = FALSE))
+  plots <- plots_set(plots, "a", title = "Kept", show = FALSE)
+  expect_message(plots_append(plots, titled, name = "a", customizer = "bare", show = FALSE),
                  "Dropped 1 change")
 })
 
 test_that("a failing customizer names the plot", {
   boom <- customizer(function(plot, z = NULL) stop("boom"),
                      function(plot) list(z = param_text("Z")))
-  plots <- quietly(plots_append(plots_init(customizer = boom), p, name = "Module/bad",
-                                z = "go", show = FALSE))
+  plots <- quietly(plots_append(using(boom), p, name = "Module/bad", z = "go",
+                                show = FALSE))
   expect_error(plots_pull(plots, 1), "Module/bad")
 })

@@ -31,6 +31,11 @@ answers what may be changed, and \code{\link[=plots_get]{plots_get()}} applies i
 for anything else — a palette, a set of categories to show, a text size.
 A customizer may rebuild a plot from its data rather than add to it, so
 what it can offer is not limited to what \code{ggplot2} lets you add on top.
+
+Give it to \code{\link[=plots_init]{plots_init()}} under a name, once, and let each plot name the
+customizer it uses. It can call any function the collection carries in
+\code{functions}. Anything else it uses must come with it: a package function,
+or a value it captured.
 }
 \examples{
 library(ggplot2)
@@ -49,5 +54,6 @@ recolor
 
 }
 \seealso{
-\code{\link[=customizer_default]{customizer_default()}}, \code{\link[=param_text]{param_text()}}, \code{\link[=plots_params]{plots_params()}}.
+\code{\link[=customizer_default]{customizer_default()}}, \code{\link[=customizer_extend]{customizer_extend()}}, \code{\link[=param_text]{param_text()}},
+\code{\link[=plots_params]{plots_params()}}.
 }

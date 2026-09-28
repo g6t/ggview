@@ -25,7 +25,8 @@ whatever \code{apply} and \code{params} add. Use it to keep the labels from
 \code{\link[=customizer_default]{customizer_default()}} while adding something of your own, rather than
 listing them again.
 
-A parameter of the same name replaces the one it shadows.
+A parameter of the same name replaces the one it shadows: a change goes to
+the last layer that takes it.
 }
 \examples{
 library(ggplot2)

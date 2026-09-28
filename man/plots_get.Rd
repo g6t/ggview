@@ -38,5 +38,5 @@ p$canvas$width
 
 }
 \seealso{
-\code{\link[=as.list]{as.list()}} for every plot at once.
+\code{\link[=save_plots]{save_plots()}} and \code{\link[=as.gallery]{as.gallery()}} for every plot at once.
 }

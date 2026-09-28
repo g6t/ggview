@@ -1,8 +1,6 @@
 # A plots collection: one row per plot, its canvas as columns, and whatever
 # somebody changed about it kept apart from the plot itself.
 
-plots_format_version <- 1L
-
 #' @title Start a plots collection
 #' @description A plots collection keeps a set of ggplots together with the
 #'   canvas each one is drawn at and the changes somebody has made to it. It is
@@ -16,12 +14,20 @@ plots_format_version <- 1L
 #'   Collect plots with [plots_append()], take one out with [plots_get()],
 #'   change one with [plots_set()], and write them all with [save_plots()].
 #'
+#'   The collection keeps each customizer once, under a name, and each plot
+#'   names the one it uses. The functions in `functions` travel with the
+#'   collection, so every customizer can call them by name instead of repeating
+#'   them.
+#'
 #' @param name A name for the collection, for whatever shows it to people.
 #' @param description One line saying what the collection is.
 #' @param dims Default canvas size per plot type, from [plots_dims()].
-#' @param customizer What plots in this collection let people change, from
-#'   [customizer()]. It is the default for [plots_append()], which can take
-#'   another one for a single plot.
+#' @param customizers What plots in this collection let people change: a named
+#'   list of [customizer()]s. A plot names one in [plots_append()], and
+#'   `default` is the one it gets when it names none. `default` is
+#'   [customizer_default()] unless you give your own.
+#' @param functions Functions every customizer can call, as a named list. They
+#'   can call each other too. Use them for what several customizers share.
 #'
 #' @return An empty collection of class `plots_tbl`, with columns `id`, `name`,
 #'   `type`, `width`, `height`, `plot`, `customizer` and `values`.
@@ -41,13 +47,35 @@ plots_format_version <- 1L
 #' # Wider heatmaps than the default, for every plot in this collection.
 #' plots_init(dims = plots_dims(heatmap = c(18, 11)))
 #'
+#' # One shared function, used by a customizer that plots name.
+#' shades <- customizer_extend(
+#'   customizer_default(),
+#'   apply = function(plot, fill = NULL) {
+#'     if (is.null(fill)) plot else recolor(plot, fill)
+#'   },
+#'   params = function(plot) list(fill = param_color("Bar color"))
+#' )
+#' plots <- plots_init(
+#'   customizers = list(shades = shades),
+#'   functions = list(
+#'     recolor = function(plot, fill) plot + geom_bar(fill = fill)
+#'   )
+#' )
+#' plots <- plots_append(plots, ggplot(mtcars, aes(factor(gear))) + geom_bar(),
+#'                       name = "gears", customizer = "shades", fill = "#36c8ef",
+#'                       show = FALSE)
+#'
 #' @export
 plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
-                       customizer = customizer_default()) {
+                       customizers = list(), functions = list()) {
   check_line(name, "name")
   check_line(description, "description")
   check_dims(dims)
-  check_customizer(customizer)
+  functions <- check_functions(functions)
+  customizers <- check_customizers(customizers, known = names(functions))
+  if (is.null(customizers$default)) {
+    customizers <- c(list(default = customizer_default()), customizers)
+  }
 
   new_plots_tbl(
     tibble::tibble(
@@ -57,15 +85,15 @@ plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
       width      = double(),
       height     = double(),
       plot       = list(),
-      customizer = list(),
+      customizer = character(),
       values     = list()
     ),
     meta = list(
       name        = name,
       description = description,
       dims        = dims,
-      customizer  = customizer,
-      version     = plots_format_version
+      customizers = customizers,
+      functions   = functions
     )
   )
 }
@@ -87,8 +115,8 @@ plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
 #'   default canvas size and groups the collection for bulk re-sizing.
 #' @param width,height Canvas size in inches. Each falls back to a [canvas()]
 #'   already on the plot, then to the collection's default for `type`.
-#' @param customizer What this plot lets people change, from [customizer()].
-#'   The collection's own is used when this is `NULL`.
+#' @param customizer What this plot lets people change: the name of one of the
+#'   collection's customizers, given to [plots_init()].
 #' @param ... Changes to store with the plot, named after the parameters its
 #'   customizer offers — `title = "…"` and so on. [plots_params()] lists them.
 #' @param show Whether to preview the plot. It is shown at its true output size
@@ -110,7 +138,7 @@ plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
 #'
 #' @export
 plots_append <- function(plots, plot, name, type = NA_character_,
-                         width = NULL, height = NULL, customizer = NULL,
+                         width = NULL, height = NULL, customizer = "default",
                          ..., show = interactive()) {
   check_plots(plots)
   if (!inherits(plot, "ggplot")) {
@@ -120,8 +148,15 @@ plots_append <- function(plots, plot, name, type = NA_character_,
   check_type(type)
 
   meta <- plots_meta_raw(plots)
-  customizer <- customizer %||% meta$customizer
-  check_customizer(customizer)
+  if (!is.character(customizer) || length(customizer) != 1L ||
+      is.null(meta$customizers[[customizer]])) {
+    cli::cli_abort(c(
+      "{.arg customizer} must name one of the collection's customizers.",
+      "i" = "It has {.val {names(meta$customizers)}}. Give others to {.fn plots_init}."
+    ))
+  }
+  row_customizer <- customizer
+  customizer <- bind_functions(meta$customizers[[customizer]], meta$functions)
 
   size <- plots_dims_lookup(meta$dims, type)
   on_plot <- canvas_inches(plot$canvas)
@@ -137,15 +172,13 @@ plots_append <- function(plots, plot, name, type = NA_character_,
     width      = check_size(width, "width"),
     height     = check_size(height, "height"),
     plot       = list(plot),
-    customizer = list(customizer),
+    customizer = row_customizer,
     values     = list(values)
   )
 
   i <- match(name, plots$name)
   if (is.na(i)) {
-    # Bare, because base `rbind()` takes the columns through `as.list()`, and a
-    # collection answers that with its plots.
-    out <- rbind(plots_bare(plots), row)
+    out <- rbind(tibble::as_tibble(plots), row)
     verb <- "Added"
   } else {
     row$id <- plots$id[[i]]
@@ -184,7 +217,7 @@ plots_append <- function(plots, plot, name, type = NA_character_,
 #'
 #' @return A ggplot object with a [canvas()].
 #'
-#' @seealso [as.list()] for every plot at once.
+#' @seealso [save_plots()] and [as.gallery()] for every plot at once.
 #'
 #' @examples
 #' library(ggplot2)
@@ -214,8 +247,9 @@ plots_pull <- function(plots, i) {
   changes <- values[setdiff(names(values), plots_reserved)]
 
   if (length(changes)) {
+    customizer <- plots_customizer(plots, i)
     plot <- tryCatch(
-      do.call(plots$customizer[[i]]$apply, c(list(plot), changes)),
+      customizer_apply(customizer, plot, changes),
       error = function(e) {
         cli::cli_abort(
           c("The customizer for {.val {plots$name[[i]]}} failed.",
@@ -307,7 +341,7 @@ plots_set <- function(plots, name = NULL, id = NULL, ...,
                 width = width, height = height)
   changes <- c(named[!vapply(named, is.null, logical(1))], list(...))
   changes <- check_values(
-    changes, plots$customizer[[i]], plots$plot[[i]],
+    changes, plots_customizer(plots, i), plots$plot[[i]],
     geometry = geometry_params(plots$width[[i]], plots$height[[i]]),
     existing = plots$values[[i]]
   )
@@ -441,7 +475,7 @@ plots_params <- function(plots, name = NULL, id = NULL) {
   check_plots(plots)
   i <- plots_locate(plots, name, id, .last = TRUE)
 
-  params <- customizer_params(plots$customizer[[i]], plots$plot[[i]])
+  params <- customizer_params(plots_customizer(plots, i), plots$plot[[i]])
   values <- plots$values[[i]]
   records <- lapply(names(params), function(key) {
     param_record(key, params[[key]], values[[key]])
@@ -465,11 +499,12 @@ param_record <- function(key, param, value) {
 #' @title What a collection is
 #' @description The collection's own details, rather than any one plot's: the
 #'   name and description given to [plots_init()], how many plots it holds, and
-#'   the version of the format it is stored in.
+#'   the names of its customizers and functions.
 #'
 #' @param plots A collection, from [plots_init()].
 #'
-#' @return A list of `name`, `description`, `plots` and `version`.
+#' @return A list of `name`, `description`, `plots`, `customizers` and
+#'   `functions`.
 #'
 #' @examples
 #' plots_meta(plots_init(name = "Brand tracker", description = "Q3 wave"))
@@ -482,7 +517,8 @@ plots_meta <- function(plots) {
     name        = meta$name,
     description = meta$description,
     plots       = nrow(plots),
-    version     = meta$version
+    customizers = names(meta$customizers),
+    functions   = names(meta$functions)
   )
 }
 
@@ -543,7 +579,7 @@ new_plots_tbl <- function(x, meta = NULL) {
 plots_meta_default <- function() {
   list(
     name = NULL, description = NULL, dims = plots_dims(),
-    customizer = customizer_default(), version = plots_format_version
+    customizers = list(default = customizer_default()), functions = list()
   )
 }
 
@@ -551,9 +587,25 @@ plots_meta_raw <- function(x) {
   attr(x, "meta") %||% plots_meta_default()
 }
 
-plots_bare <- function(x) {
-  class(x) <- setdiff(class(x), "plots_tbl")
-  x
+# The customizer a plot names, able to call the collection's functions.
+plots_customizer <- function(plots, i) {
+  key <- plots$customizer[[i]]
+  if (!is.character(key) || length(key) != 1L) {
+    cli::cli_abort(c(
+      "{.val {plots$name[[i]]}} does not name a customizer.",
+      "i" = "A collection saved by an earlier ggview has to be built again."
+    ), call = NULL)
+  }
+  meta <- plots_meta_raw(plots)
+  customizer <- meta$customizers[[key]]
+  if (is.null(customizer)) {
+    cli::cli_abort(c(
+      "{.val {plots$name[[i]]}} uses the customizer {.val {key}}, which the collection
+       does not have.",
+      "i" = "It has {.val {names(meta$customizers)}}."
+    ), call = NULL)
+  }
+  bind_functions(customizer, meta$functions)
 }
 
 # Keep the class and the collection's own details through dplyr verbs.
@@ -566,32 +618,14 @@ dplyr_reconstruct.plots_tbl <- function(data, template) {
 # prints as any tibble does, list-columns and all.
 #' @exportS3Method tibble::as_tibble
 as_tibble.plots_tbl <- function(x, ...) {
-  x <- plots_bare(x)
+  class(x) <- setdiff(class(x), "plots_tbl")
   attr(x, "meta") <- NULL
   x
 }
 
-# Subsetting goes through a bare copy, because a tibble takes its columns with
-# `lapply()`, and a collection answers that with its plots. The argument shapes
-# are the ones `[.tbl_df` accepts.
 #' @export
-`[.plots_tbl` <- function(x, i, j, ..., drop = FALSE) {
-  bare <- plots_bare(x)
-  n_real_args <- nargs() - !missing(drop)
-  columns_only <- n_real_args <= 2L
-
-  out <- if (columns_only) {
-    if (missing(i)) bare else bare[i]
-  } else if (missing(i) && missing(j)) {
-    bare[, , drop = drop]
-  } else if (missing(i)) {
-    bare[, j, drop = drop]
-  } else if (missing(j)) {
-    bare[i, , drop = drop]
-  } else {
-    bare[i, j, drop = drop]
-  }
-
+`[.plots_tbl` <- function(x, ...) {
+  out <- NextMethod()
   if (is.data.frame(out)) new_plots_tbl(out, meta = plots_meta_raw(x)) else out
 }
 
@@ -857,6 +891,54 @@ values_still_valid <- function(values, customizer, plot, width, height) {
     )
   }
   values[ok]
+}
+
+# A collection's functions: named, each a function, and free of anything that
+# only exists in this session. Their source records go, as a customizer's do.
+check_functions <- function(functions, call = parent.frame()) {
+  check_named_list(functions, "functions", call = call)
+  for (key in names(functions)) {
+    fun <- functions[[key]]
+    if (!is.function(fun) || is.primitive(fun)) {
+      cli::cli_abort("{.arg functions} must hold functions: {.val {key}} is not one.",
+                     call = call)
+    }
+    check_travels(fun, cli::format_inline("Function {.val {key}}"),
+                  known = names(functions), call = call)
+    functions[[key]] <- utils::removeSource(fun)
+  }
+  functions
+}
+
+check_customizers <- function(customizers, known, call = parent.frame()) {
+  check_named_list(customizers, "customizers", call = call)
+  for (key in names(customizers)) {
+    customizer <- customizers[[key]]
+    if (!inherits(customizer, "plots_customizer")) {
+      cli::cli_abort(
+        c("{.arg customizers} must hold customizers: {.val {key}} is not one.",
+          "i" = "Build one with {.fn customizer} or {.fn customizer_extend}."),
+        call = call
+      )
+    }
+    what <- cli::format_inline("Customizer {.val {key}}")
+    for (layer in customizer$layers) {
+      check_travels(layer$apply, what, known = known, call = call)
+      check_travels(layer$params, what, known = known, call = call)
+    }
+  }
+  customizers
+}
+
+check_named_list <- function(x, arg, call = parent.frame()) {
+  if (!is.list(x) || inherits(x, "plots_customizer")) {
+    cli::cli_abort("{.arg {arg}} must be a named list.", call = call)
+  }
+  keys <- names(x) %||% rep("", length(x))
+  if (!all(nzchar(keys)) || anyDuplicated(keys)) {
+    cli::cli_abort("Every entry in {.arg {arg}} needs a name of its own.", call = call)
+  }
+  invisible(x)
 }
 
 # --- small helpers -----------------------------------------------------------

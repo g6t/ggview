@@ -8,7 +8,8 @@ plots_init(
   name = NULL,
   description = NULL,
   dims = plots_dims(),
-  customizer = customizer_default()
+  customizers = list(),
+  functions = list()
 )
 }
 \arguments{
@@ -18,9 +19,13 @@ plots_init(
 
 \item{dims}{Default canvas size per plot type, from \code{\link[=plots_dims]{plots_dims()}}.}
 
-\item{customizer}{What plots in this collection let people change, from
-\code{\link[=customizer]{customizer()}}. It is the default for \code{\link[=plots_append]{plots_append()}}, which can take
-another one for a single plot.}
+\item{customizers}{What plots in this collection let people change: a named
+list of \code{\link[=customizer]{customizer()}}s. A plot names one in \code{\link[=plots_append]{plots_append()}}, and
+\code{default} is the one it gets when it names none. \code{default} is
+\code{\link[=customizer_default]{customizer_default()}} unless you give your own.}
+
+\item{functions}{Functions every customizer can call, as a named list. They
+can call each other too. Use them for what several customizers share.}
 }
 \value{
 An empty collection of class \code{plots_tbl}, with columns \code{id}, \code{name},
@@ -38,6 +43,11 @@ back to.
 
 Collect plots with \code{\link[=plots_append]{plots_append()}}, take one out with \code{\link[=plots_get]{plots_get()}},
 change one with \code{\link[=plots_set]{plots_set()}}, and write them all with \code{\link[=save_plots]{save_plots()}}.
+
+The collection keeps each customizer once, under a name, and each plot
+names the one it uses. The functions in \code{functions} travel with the
+collection, so every customizer can call them by name instead of repeating
+them.
 }
 \examples{
 library(ggplot2)
@@ -51,6 +61,24 @@ plots
 
 # Wider heatmaps than the default, for every plot in this collection.
 plots_init(dims = plots_dims(heatmap = c(18, 11)))
+
+# One shared function, used by a customizer that plots name.
+shades <- customizer_extend(
+  customizer_default(),
+  apply = function(plot, fill = NULL) {
+    if (is.null(fill)) plot else recolor(plot, fill)
+  },
+  params = function(plot) list(fill = param_color("Bar color"))
+)
+plots <- plots_init(
+  customizers = list(shades = shades),
+  functions = list(
+    recolor = function(plot, fill) plot + geom_bar(fill = fill)
+  )
+)
+plots <- plots_append(plots, ggplot(mtcars, aes(factor(gear))) + geom_bar(),
+                      name = "gears", customizer = "shades", fill = "#36c8ef",
+                      show = FALSE)
 
 }
 \seealso{

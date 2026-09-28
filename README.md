@@ -81,7 +81,9 @@ plots <- plots |> dplyr::mutate(height = ifelse(type == "bar", 6, height))
 ```
 
 What a plot lets you change is its own business. `customizer_default()` offers
-the labels every plot has; write a `customizer()` for anything else, and
+the labels every plot has; write a `customizer()` for anything else, give it to
+`plots_init()` under a name, and let each plot name the one it uses. Functions
+the customizers share go to `plots_init(functions = )`, so they are written once.
 `plots_params()` says what any given plot accepts — enough for a program to
 build a control for each one.
 

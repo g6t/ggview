@@ -11,7 +11,7 @@ plots_append(
   type = NA_character_,
   width = NULL,
   height = NULL,
-  customizer = NULL,
+  customizer = "default",
   ...,
   show = interactive()
 )
@@ -31,8 +31,8 @@ default canvas size and groups the collection for bulk re-sizing.}
 \item{width, height}{Canvas size in inches. Each falls back to a \code{\link[=canvas]{canvas()}}
 already on the plot, then to the collection's default for \code{type}.}
 
-\item{customizer}{What this plot lets people change, from \code{\link[=customizer]{customizer()}}.
-The collection's own is used when this is \code{NULL}.}
+\item{customizer}{What this plot lets people change: the name of one of the
+collection's customizers, given to \code{\link[=plots_init]{plots_init()}}.}
 
 \item{...}{Changes to store with the plot, named after the parameters its
 customizer offers — \code{title = "…"} and so on. \code{\link[=plots_params]{plots_params()}} lists them.}

@@ -160,13 +160,16 @@ rebuild a plot rather than add to it, so a customizer is not limited to what
 `ggplot2` lets you add on top — filtering categories or reordering them is
 possible here, and impossible with a layer.
 
-Give the same plot the new customizer by adding it again under the same name. It
-keeps its place and its id, and re-adding re-declares the plot, so it starts with
-no changes recorded.
+A collection keeps each customizer once, under a name you give it in
+`plots_init()`, and each plot names the one it uses. A plot that names none gets
+`default`, which is `customizer_default()` unless you give your own.
 
 ```{r}
+plots <- plots_init(name = "Engine notes", description = "Two plots from mtcars",
+                    customizers = list(recolor = recolor))
 plots <- plots_append(plots, weight, name = "Engine/weight", type = "point",
-                      customizer = recolor)
+                      customizer = "recolor")
+plots <- plots_append(plots, cylinders, name = "Engine/cylinders", type = "bar")
 
 plots_params(plots, "Engine/weight")
 ```
@@ -183,19 +186,30 @@ plots_get(plots, "Engine/weight")
 ```
 
 
-A customizer must survive being read back somewhere else, so it may not reach
-for anything that only exists in the session that wrote it:
+## Functions the customizers share
+
+A collection is read back in another session, so a customizer may not reach for
+anything that only exists in the session that wrote it:
 
 ```{r, error = TRUE}
-house_palette <- c("#36c8ef", "#50bd90")
+house_fill <- function(plot) plot + scale_fill_manual(values = c("#36c8ef", "#50bd90"))
 
-customizer(
-  apply = function(plot, a = NULL) plot + scale_fill_manual(values = house_palette),
-  params = function(plot) list(a = param_text("A"))
+housed <- customizer(
+  apply = function(plot, house = NULL) if (isTRUE(house)) house_fill(plot) else plot,
+  params = function(plot) list(house = param_flag("House colors", default = FALSE))
 )
+plots_init(customizers = list(housed = housed))
 ```
 
-Pass it in as a parameter instead, with the palette as the default.
+Give the collection the function instead. What is in `functions` travels with
+the collection, and every customizer can call it by name, so several customizers
+share one copy of it rather than each repeating it.
+
+```{r}
+shared <- plots_init(customizers = list(housed = housed),
+                     functions = list(house_fill = house_fill))
+plots_meta(shared)$functions
+```
 
 ## What a program reads
 
@@ -255,11 +269,11 @@ files <- save_plots(plots, dir = dir)
 list.files(dir, recursive = TRUE)
 ```
 
-`as.list()` gives the same plots as a named list, ready for any other way of
-writing them.
+`plots_as_content()` gives the same plots as a table of objects and paths, for
+writers that take one.
 
 ```{r}
-names(as.list(plots))
+plots_as_content(plots)$name
 ```
 
 ## Store it and pick it up again
@@ -282,7 +296,8 @@ Plots built at the top level of a script cost little, because the global
 environment is stored by reference: twenty plots over a 4,000 row data frame
 come to under 3 MB. A plot built inside a function instead carries that
 function's local objects, so a builder function that holds a large object in
-scope makes a large file.
+scope makes a large file. A complete theme added to a plot is stored with that
+plot too, and in `ggplot2` 4.0 a complete theme is about 2 MB.
 
 ## Browse the whole collection
 
