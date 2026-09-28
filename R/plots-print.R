@@ -106,7 +106,7 @@ plots_lines <- function(x, folders) {
     title <- if (is.na(titles[[i]])) {
       cli::col_silver(shorten("<no title>", room))
     } else {
-      cli::col_grey(shorten(titles[[i]], room))
+      cli::col_grey(shorten(one_line(titles[[i]]), room))
     }
     out <- c(out, paste0(
       cli::col_silver(index[[i]]), cli::col_yellow(mark[[i]]), " ",
@@ -193,9 +193,14 @@ param_text_of <- function(value) {
     } else {
       paste(value, collapse = ", ")
     }
-    return(text)
+    return(one_line(text))
   }
-  as.character(value)
+  one_line(as.character(value))
+}
+
+# Text on one line: a line break shows as a mark rather than breaking the listing.
+one_line <- function(x) {
+  gsub("\n", if (cli::is_utf8_output()) "\u21b5" else "\\n", x, fixed = TRUE)
 }
 
 #' @title Print default canvas sizes

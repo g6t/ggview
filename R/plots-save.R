@@ -49,7 +49,7 @@ save_plots <- function(plots, dir = ".", device = "png", ...) {
     cli::cli_progress_update()
   }
   cli::cli_progress_done()
-  cli::cli_alert_success("Saved {nrow(plots)} plot{?s} to {.path {dir}}.")
+  if (!plots_quiet()) cli::cli_alert_success("Saved {nrow(plots)} plot{?s} to {.path {dir}}.")
   invisible(files)
 }
 

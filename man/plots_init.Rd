@@ -29,7 +29,7 @@ can call each other too. Use them for what several customizers share.}
 }
 \value{
 An empty collection of class \code{plots_tbl}, with columns \code{id}, \code{name},
-\code{type}, \code{width}, \code{height}, \code{plot}, \code{customizer} and \code{values}.
+\code{type}, \code{width}, \code{height}, \code{plot}, \code{customizer}, \code{theme} and \code{values}.
 }
 \description{
 A plots collection keeps a set of ggplots together with the
@@ -47,8 +47,22 @@ change one with \code{\link[=plots_set]{plots_set()}}, and write them all with \
 The collection keeps each customizer once, under a name, and each plot
 names the one it uses. The functions in \code{functions} travel with the
 collection, so every customizer can call them by name instead of repeating
-them.
+them. Themes are kept once too: plots that share a theme store one copy,
+and \code{\link[=plots_get]{plots_get()}} puts it back.
+
+A collection is read back in other sessions, so what it carries must not
+depend on this one. \code{plots_init()} refuses a customizer or function that
+uses a name from the session, or an unqualified function from an attached
+package other than base R, ggplot2 and ggview: write \code{stringr::str_wrap()},
+not \code{str_wrap()}.
 }
+\section{Options}{
+
+\code{options(ggview.quiet = TRUE)} silences the one-line reports of
+\code{\link[=plots_append]{plots_append()}}, \code{\link[=plots_get]{plots_get()}}, \code{\link[=plots_reset]{plots_reset()}} and \code{\link[=save_plots]{save_plots()}}, for
+loops over many plots. Warnings still show.
+}
+
 \examples{
 library(ggplot2)
 plots <- plots_init(name = "Brand tracker")

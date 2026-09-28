@@ -50,6 +50,12 @@ into it. Adding a name that is already in the collection updates that row
 in place and keeps its \code{id} and the changes recorded against it, so
 re-running a chunk is safe. A change the new plot no longer accepts is
 dropped, and \code{...} replaces a change of the same name.
+
+The plot's theme goes to the collection's store, which keeps one copy of
+each distinct theme. A plot whose scales, layers or facets carry a function
+that uses a name from this session, or an unqualified function from an
+attached package, draws here and fails elsewhere, so it is added with a
+warning that names it.
 }
 \examples{
 library(ggplot2)

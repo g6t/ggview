@@ -10,13 +10,14 @@ plots_meta(plots)
 \item{plots}{A collection, from \code{\link[=plots_init]{plots_init()}}.}
 }
 \value{
-A list of \code{name}, \code{description}, \code{plots}, \code{customizers} and
-\code{functions}.
+A list of \code{name}, \code{description}, \code{plots}, \code{customizers},
+\code{functions}, \code{themes} and \code{packages}.
 }
 \description{
 The collection's own details, rather than any one plot's: the
-name and description given to \code{\link[=plots_init]{plots_init()}}, how many plots it holds, and
-the names of its customizers and functions.
+name and description given to \code{\link[=plots_init]{plots_init()}}, how many plots it holds, the
+names of its customizers and functions, how many distinct themes it
+stores, and the packages its plots need to draw.
 }
 \examples{
 plots_meta(plots_init(name = "Brand tracker", description = "Q3 wave"))

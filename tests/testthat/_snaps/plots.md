@@ -54,5 +54,5 @@
       print(customizer_default())
     Message
       -- <plots_customizer> ----------------------------------------------------------
-        parameters: title, title_size, subtitle, subtitle_size, caption, caption_size, x, x_size, y, y_size, axis_text_size, axis_text_wrap, text_size, legend, legend_direction, x_grid, y_grid
+        parameters: title, title_size, subtitle, subtitle_size, caption, caption_size, x, x_size, y, y_size, axis_text_size, axis_text_wrap, text_size, legend, legend_direction, x_grid, y_grid, colors
 

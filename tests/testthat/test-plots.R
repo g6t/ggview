@@ -22,11 +22,12 @@ test_that("a new collection is empty and keeps what it was given", {
   expect_equal(nrow(plots), 0)
   expect_named(
     plots,
-    c("id", "name", "type", "width", "height", "plot", "customizer", "values")
+    c("id", "name", "type", "width", "height", "plot", "customizer", "theme", "values")
   )
   expect_equal(plots_meta(plots), list(name = "Bundle", description = "One line",
                                        plots = 0L, customizers = "default",
-                                       functions = NULL))
+                                       functions = NULL, themes = 0L,
+                                       packages = character()))
 
   wide <- plots_init(dims = plots_dims(heatmap = c(18, 11)))
   expect_equal(plots_meta_raw(wide)$dims$heatmap, c(18, 11))
@@ -253,7 +254,7 @@ test_that("what a collection carries must be able to travel", {
   on.exit(rm("a_session_object", envir = globalenv()), add = TRUE)
   session_var <- function(plot, a = NULL) paste(plot, a_session_object)
   environment(session_var) <- globalenv()
-  expect_error(carries(session_var), "from this session")
+  expect_error(carries(session_var), "another session will not have")
 
   # A function it does not define is the same problem: it would not be found.
   assign("a_project_builder", function(x) x, envir = globalenv())
@@ -741,4 +742,172 @@ test_that("a failing customizer names the plot", {
   plots <- quietly(plots_append(using(boom), p, name = "Module/bad", z = "go",
                                 show = FALSE))
   expect_error(plots_pull(plots, 1), "Module/bad")
+})
+
+test_that("the default offers a color per category and keeps the legend", {
+  values <- c("4" = "#36c8ef", "6" = "grey75", "8" = "#de425b")
+  bars <- ggplot2::ggplot(mtcars, ggplot2::aes(factor(cyl), fill = factor(cyl),
+                                                colour = factor(cyl))) +
+    ggplot2::geom_bar() +
+    ggplot2::scale_fill_manual(name = "", values = values) +
+    ggplot2::scale_colour_manual(name = "", values = values, guide = "none")
+  plots <- quietly(plots_append(plots_init(), bars, name = "a", show = FALSE))
+
+  colors <- plots_params(plots, "a")$colors
+  expect_equal(colors$keys, c("4", "6", "8"))
+  # Hex, as a color picker shows it, however the plot spelled the color.
+  expect_equal(unlist(colors$default), c("4" = "#36C8EF", "6" = "#BFBFBF", "8" = "#DE425B"))
+
+  out <- plots_pull(plots_set(plots, "a", colors = c("6" = "#50BD90"), show = FALSE), 1)
+  drawn <- ggplot2::layer_data(out)
+  expect_equal(toupper(unique(drawn$fill)), c("#36C8EF", "#50BD90", "#DE425B"))
+  # The colour scale holds the same categories, so it follows the fill.
+  expect_equal(toupper(unique(drawn$colour)), c("#36C8EF", "#50BD90", "#DE425B"))
+  # Changed in place: no legend title appears and the colour legend stays off.
+  expect_identical(out$scales$get_scales("fill")$name, "")
+  expect_identical(out$scales$get_scales("colour")$guide, "none")
+
+  # A plot with no scale of its own keeps the colors it did not change.
+  hue <- ggplot2::ggplot(mtcars, ggplot2::aes(factor(cyl), fill = factor(cyl))) +
+    ggplot2::geom_bar()
+  plots <- quietly(plots_append(plots_init(), hue, name = "h", show = FALSE))
+  before <- unlist(plots_params(plots, "h")$colors$default)
+  out <- plots_pull(plots_set(plots, "h", colors = c("8" = "#123456"), show = FALSE), 1)
+  expect_equal(toupper(unique(ggplot2::layer_data(out)$fill)),
+               unname(c(before[c("4", "6")], "#123456")))
+})
+
+test_that("identity and continuous color scales are handled", {
+  ided <- ggplot2::ggplot(data.frame(x = c("a", "b"), y = 1:2, col = c("#36c8ef", "grey")),
+                          ggplot2::aes(x, y, fill = col)) +
+    ggplot2::geom_col() + ggplot2::scale_fill_identity()
+  plots <- quietly(plots_append(plots_init(), ided, name = "i", show = FALSE))
+  # Never trained without a legend, so the categories are the colors drawn.
+  expect_equal(plots_params(plots, "i")$colors$keys, c("#36c8ef", "grey"))
+  out <- plots_pull(plots_set(plots, "i", colors = c(grey = "#50BD90"), show = FALSE), 1)
+  expect_equal(toupper(ggplot2::layer_data(out)$fill), c("#36C8EF", "#50BD90"))
+
+  tiles <- ggplot2::ggplot(data.frame(x = 1:2, y = 1:2, v = 1:2), ggplot2::aes(x, y, fill = v)) +
+    ggplot2::geom_tile()
+  plots <- quietly(plots_append(plots_init(), tiles, name = "t", show = FALSE))
+  expect_null(plots_params(plots, "t")$colors)
+  expect_error(plots_set(plots, "t", colors = c(a = "#ff0000")), "no parameter")
+})
+
+test_that("a grid the plot hid comes back where it can be seen", {
+  grid_of <- function(plot, axis) {
+    ggplot2::calc_element(paste0("panel.grid.major.", axis), ggplot2::complete_theme(plot$theme))
+  }
+  # The parent gridline is white on a white panel, as in a house theme.
+  flat <- p + ggplot2::theme_minimal() + ggplot2::theme(
+    panel.grid = ggplot2::element_line(colour = "white"),
+    panel.grid.major.x = ggplot2::element_blank(),
+    panel.grid.major.y = ggplot2::element_line(colour = "#e9ecef")
+  )
+  plots <- quietly(plots_append(plots_init(), flat, name = "g", show = FALSE))
+  expect_false(plots_params(plots, "g")$x_grid$default)
+  shown <- plots_pull(plots_set(plots, "g", x_grid = TRUE, show = FALSE), 1)
+  expect_equal(grid_of(shown, "x")$colour, "#e9ecef")   # drawn like the other axis
+
+  bare <- flat + ggplot2::theme(panel.grid.major.y = ggplot2::element_blank())
+  plots <- quietly(plots_append(plots_init(), bare, name = "b", show = FALSE))
+  expect_false(plots_params(plots, "b")$y_grid$default)
+  shown <- plots_pull(plots_set(plots, "b", y_grid = TRUE, show = FALSE), 1)
+  expect_equal(grid_of(shown, "y")$colour, "grey92")   # nothing visible to copy
+})
+
+test_that("a function from an attached package must be qualified", {
+  attach(list(fake_wrap = function(x) x), name = "package:fakewrap", warn.conflicts = FALSE)
+  on.exit(detach("package:fakewrap"), add = TRUE)
+  carries <- function(apply) {
+    environment(apply) <- globalenv()
+    plots_init(customizers = list(x = customizer(apply, function(plot) list())))
+  }
+
+  # Attached here, and nowhere a reader promises to attach it.
+  expect_error(carries(function(plot, a = NULL) fake_wrap(plot)), "fake_wrap \\(fakewrap\\)")
+  # base R, ggplot2 and ggview are safe unqualified; anything qualified is safe.
+  expect_s3_class(carries(function(plot, a = NULL) plot + labs(title = paste(a))), "plots_tbl")
+  expect_s3_class(carries(function(plot, a = NULL) fakewrap::fake_wrap(plot)), "plots_tbl")
+})
+
+test_that("a plot carrying a function that will not travel is added with a warning", {
+  attach(list(fake_wrap = function(x) x), name = "package:fakewrap", warn.conflicts = FALSE)
+  on.exit(detach("package:fakewrap"), add = TRUE)
+  labeller <- function(x) fake_wrap(x)
+  environment(labeller) <- globalenv()
+  wrapped <- p + ggplot2::scale_x_continuous(labels = labeller)
+  expect_warning(
+    quietly(plots_append(plots_init(), wrapped, name = "Module/wrapped", show = FALSE)),
+    "Module/wrapped"
+  )
+  # A scales helper travels.
+  expect_no_warning(
+    quietly(plots_append(plots_init(), p + ggplot2::scale_x_continuous(labels = scales::label_comma()),
+                         name = "fine", show = FALSE))
+  )
+})
+
+test_that("plots that share a theme store one copy of it", {
+  themed <- titled + ggplot2::theme_minimal()
+  plots <- quietly({
+    plots <- plots_init()
+    plots <- plots_append(plots, themed, name = "a", show = FALSE)
+    plots <- plots_append(plots, themed + ggplot2::labs(title = "Other"), name = "b", show = FALSE)
+    plots_append(plots, titled, name = "c", show = FALSE)
+  })
+  expect_equal(plots_meta(plots)$themes, 2L)
+  expect_equal(plots$theme[[1]], plots$theme[[2]])
+  # The stored plot carries no theme; the plot that comes out has all of it.
+  expect_length(plots$plot[[1]]$theme, 0)
+  out <- plots_pull(plots, 1)
+  expect_equal(ggplot2::calc_element("panel.grid.major.x", ggplot2::complete_theme(out$theme)),
+               ggplot2::calc_element("panel.grid.major.x", ggplot2::complete_theme(themed$theme)))
+  # A customizer reads the theme as the plot had it.
+  expect_equal(plots_params(plots, "a")$title_size$default,
+               ggplot2::calc_element("plot.title", ggplot2::complete_theme(themed$theme))$size)
+
+  # Two copies cost little more than one.
+  one <- quietly(plots_append(plots_init(), themed, name = "a", show = FALSE))
+  two <- quietly(plots_append(one, themed, name = "b", show = FALSE))
+  expect_lt(length(serialize(two, NULL)), 1.5 * length(serialize(one, NULL)))
+
+  # A filtered collection keeps only the themes its plots use.
+  expect_equal(plots_meta(plots[plots$name == "c", ])$themes, 1L)
+})
+
+test_that("a theme drawn by another package records that package", {
+  skip_if_not_installed("ggtext")
+  boxed <- p + ggplot2::theme(plot.title = ggtext::element_textbox_simple())
+  plots <- quietly(plots_append(plots_init(), boxed, name = "a", show = FALSE))
+  expect_equal(plots_meta(plots)$packages, "ggtext")
+})
+
+test_that("a summary of a collection is a plain tibble", {
+  plots <- two_plots()
+  counted <- dplyr::count(plots, type)
+  expect_false(inherits(counted, "plots_tbl"))
+  expect_no_error(print(counted))
+  expect_false(inherits(plots[, c("name", "type")], "plots_tbl"))
+  expect_s3_class(dplyr::filter(plots, type == "bar"), "plots_tbl")
+})
+
+test_that("the reports can be silenced", {
+  withr::local_options(ggview.quiet = TRUE)
+  expect_no_message(plots <- plots_append(plots_init(), titled, name = "a", show = FALSE))
+  expect_no_message(plots_get(plots, "a"))
+  expect_no_message(plots_reset(plots, show = FALSE))
+})
+
+test_that("a caption may run over several lines", {
+  two_lines <- p + ggplot2::labs(caption = "Base: all\nSource: survey")
+  plots <- quietly(plots_append(plots_init(), two_lines, name = "a", show = FALSE))
+  params <- plots_params(plots, "a")
+  expect_true(params$caption$multiline)
+  expect_true(params$subtitle$multiline)
+  expect_false(params$title$multiline)
+  expect_error(param_text("T", multiline = "yes"), "TRUE")
+  # The listing keeps the caption on one line.
+  shown <- cli::ansi_strip(utils::capture.output(print(params), type = "message"))
+  expect_false(any(grepl("^Source: survey", shown)))
 })

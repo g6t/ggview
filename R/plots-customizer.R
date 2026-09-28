@@ -86,13 +86,20 @@ print.plots_customizer <- function(x, ...) {
 #' @description Offers what any plot has, whatever it draws: its title,
 #'   subtitle, footnote and axis titles, the size of each of those, the size and
 #'   line wrapping of the axis text, the overall text size, where the legend sits
-#'   and which way it runs, and whether the gridlines show. Each one defaults to
-#'   what the plot already carries, `NA` leaves it alone, and not mentioning it
-#'   changes nothing.
+#'   and which way it runs, whether the gridlines show, and a color for each
+#'   category the plot colors by. Each one defaults to what the plot already
+#'   carries, `NA` leaves it alone, and not mentioning it changes nothing.
 #'
 #'   The overall text size scales every text size the theme sets in points by
 #'   the same ratio, so it works on a complete theme too. A specific size given
-#'   with it wins. Showing a grid brings back its major lines only.
+#'   with it wins. Showing a grid brings back its major lines only, drawn like
+#'   the plot's other gridlines when it shows some.
+#'
+#'   The colors come from the plot's discrete fill scale, or its colour scale
+#'   when it has no fill. A change reaches every such scale that holds the same
+#'   category, so text drawn in its bar's color follows the bar. The scale is
+#'   changed in place, so its legend title and guide stay. A continuous scale,
+#'   such as a heatmap's, offers no colors.
 #'
 #'   Sizes are changed in place, so a title drawn as a `ggtext` textbox stays a
 #'   textbox. Replacing it outright is an error in ggplot2, not a silent loss.
@@ -106,7 +113,10 @@ print.plots_customizer <- function(x, ...) {
 #'
 #' @export
 customizer_default <- function() {
-  customizer(apply = customize_labels, params = params_labels)
+  new_customizer(c(
+    customizer(apply = customize_labels, params = params_labels)$layers,
+    customizer(apply = customize_colors, params = params_colors)$layers
+  ))
 }
 
 legend_positions <- c("right", "left", "top", "bottom", "none")
@@ -159,11 +169,11 @@ customize_labels <- function(plot,
   if (given(legend_direction)) settings$legend.direction <- legend_direction
   # Showing a grid brings back its major lines only. Hiding it hides both.
   if (given(x_grid)) {
-    settings$panel.grid.major.x <- grid_element(x_grid)
+    settings$panel.grid.major.x <- grid_element(plot, "x", x_grid)
     if (!x_grid) settings$panel.grid.minor.x <- ggplot2::element_blank()
   }
   if (given(y_grid)) {
-    settings$panel.grid.major.y <- grid_element(y_grid)
+    settings$panel.grid.major.y <- grid_element(plot, "y", y_grid)
     if (!y_grid) settings$panel.grid.minor.y <- ggplot2::element_blank()
   }
   if (length(settings)) plot <- plot + do.call(ggplot2::theme, settings)
@@ -179,15 +189,15 @@ params_labels <- function(plot) {
   }
 
   list(
-    title            = param_text("Title", default = plot_label(plot, "title")),
+    title            = label_param("Title", plot, "title"),
     title_size       = size("title_size"),
-    subtitle         = param_text("Subtitle", default = plot_label(plot, "subtitle")),
+    subtitle         = label_param("Subtitle", plot, "subtitle", multiline = TRUE),
     subtitle_size    = size("subtitle_size"),
-    caption          = param_text("Footnote", default = plot_label(plot, "caption")),
+    caption          = label_param("Footnote", plot, "caption", multiline = TRUE),
     caption_size     = size("caption_size"),
-    x                = param_text("X axis title", default = plot_label(plot, "x")),
+    x                = label_param("X axis title", plot, "x"),
     x_size           = size("x_size"),
-    y                = param_text("Y axis title", default = plot_label(plot, "y")),
+    y                = label_param("Y axis title", plot, "y"),
     y_size           = size("y_size"),
     axis_text_size   = param_number("Axis text size",
                                     default = element_size(theme, "axis.text.x"),
@@ -202,6 +212,14 @@ params_labels <- function(plot) {
     x_grid           = param_flag("X gridlines", default = grid_shown(theme, "x")),
     y_grid           = param_flag("Y gridlines", default = grid_shown(theme, "y"))
   )
+}
+
+# A label's text parameter. It runs over several lines when it has to: a
+# subtitle or footnote, or any label that already breaks.
+label_param <- function(label, plot, slot, multiline = FALSE) {
+  default <- plot_label(plot, slot)
+  param_text(label, default = default,
+             multiline = multiline || isTRUE(grepl("\n", default, fixed = TRUE)))
 }
 
 size_labels <- c(
@@ -284,10 +302,50 @@ wrap_labels <- function(width) {
   }
 }
 
-# An empty line inherits the theme's own gridline styling, so a grid can be put
-# back without knowing how it was drawn.
-grid_element <- function(show) {
-  if (isTRUE(show)) ggplot2::element_line() else ggplot2::element_blank()
+# A gridline that can be seen. An empty line would inherit the theme's parent
+# gridline, which a theme may draw in the panel's own color: white on white. So a
+# grid comes back drawn like the axis's own line or the other axis's, then the
+# parent's, and a light grey when none of them shows on the panel.
+grid_element <- function(plot, axis, show) {
+  if (!isTRUE(show)) return(ggplot2::element_blank())
+  theme <- plot_theme(plot)
+  other <- if (axis == "x") "y" else "x"
+  for (name in c(paste0("panel.grid.major.", c(axis, other)), "panel.grid.major", "panel.grid")) {
+    line <- visible_line(theme, name)
+    if (!is.null(line)) return(line)
+  }
+  width <- tryCatch(ggplot2::calc_element("panel.grid", theme)$linewidth, error = function(e) NULL)
+  ggplot2::element_line(colour = "grey92", linewidth = width %||% 0.5, inherit.blank = FALSE)
+}
+
+# The line a theme element draws, when it draws one the panel does not hide.
+visible_line <- function(theme, name) {
+  if (is.null(theme)) return(NULL)
+  line <- tryCatch(ggplot2::calc_element(name, theme), error = function(e) NULL)
+  if (!inherits(line, "element_line") || is.null(line$colour) || is.na(line$colour)) {
+    return(NULL)
+  }
+  if (same_color(line$colour, panel_fill(theme))) return(NULL)
+  ggplot2::element_line(colour = line$colour, linewidth = line$linewidth,
+                        linetype = line$linetype, lineend = line$lineend,
+                        inherit.blank = FALSE)
+}
+
+# What a gridline is drawn on: the panel, or the plot behind it when the panel is
+# blank or see-through.
+panel_fill <- function(theme) {
+  for (name in c("panel.background", "plot.background")) {
+    fill <- tryCatch(ggplot2::calc_element(name, theme)$fill, error = function(e) NULL)
+    if (is.character(fill) && length(fill) == 1L && !is.na(fill) &&
+        grDevices::col2rgb(fill, alpha = TRUE)[[4]] > 0) {
+      return(fill)
+    }
+  }
+  "white"
+}
+
+same_color <- function(a, b) {
+  identical(grDevices::col2rgb(a), grDevices::col2rgb(b))
 }
 
 # The plot's theme filled in from the defaults it inherits, for reading what a
@@ -304,11 +362,94 @@ element_size <- function(theme, name) {
 
 grid_shown <- function(theme, axis) {
   if (is.null(theme)) return(NULL)
-  element <- tryCatch(
-    ggplot2::calc_element(paste0("panel.grid.major.", axis), theme),
-    error = function(e) NULL
-  )
-  if (is.null(element)) NULL else !inherits(element, "element_blank")
+  !is.null(visible_line(theme, paste0("panel.grid.major.", axis)))
+}
+
+# --- colors ------------------------------------------------------------------
+
+# One color per category, read off the plot's discrete fill scale, or its colour
+# scale when it has no fill.
+params_colors <- function(plot) {
+  scales <- color_scales(plot)
+  if (!length(scales)) return(list())
+  main <- scales[[1]]
+  list(colors = param_mapping(
+    "Colors", keys = main$keys, to = "color",
+    labels = if (identical(main$labels, main$keys)) NULL else main$labels,
+    default = as.list(main$values)
+  ))
+}
+
+# A change reaches every discrete fill and colour scale that holds the category.
+customize_colors <- function(plot, colors = NULL) {
+  if (is.null(colors) || (!is.list(colors) && length(colors) == 1L && is.na(colors))) {
+    return(plot)
+  }
+  wanted <- unlist(colors)
+  scales <- color_scales(plot)
+  for (aesthetic in names(scales)) {
+    scale <- scales[[aesthetic]]
+    keep <- intersect(names(wanted), scale$keys)
+    if (!length(keep)) next
+    values <- scale$values
+    values[keep] <- wanted[keep]
+    plot <- suppressMessages(plot + recolored_scale(plot, aesthetic, values))
+  }
+  plot
+}
+
+# The plot's discrete color scales with at least one category, fill first: for
+# each, its categories, the hex color each has now, and what the legend calls it.
+color_scales <- function(plot) {
+  built <- suppressMessages(suppressWarnings(ggplot2::ggplot_build(plot)))
+  out <- list()
+  for (aesthetic in c("fill", "colour")) {
+    scale <- built$plot$scales$get_scales(aesthetic)
+    if (is.null(scale) || !isTRUE(scale$is_discrete())) next
+    identity <- inherits(scale, "ScaleDiscreteIdentity")
+    # An identity scale with no legend is never trained, so its categories are the
+    # colors the layers draw.
+    keys <- if (identity) {
+      unique(unlist(lapply(built$data, function(d) d[[aesthetic]])))
+    } else {
+      scale$get_limits()
+    }
+    keys <- as.character(keys[!is.na(keys)])
+    if (!length(keys)) next
+    values <- if (identity) keys else scale$map(keys)
+    labels <- if (identity) keys else {
+      tryCatch(as.character(scale$get_labels(keys)), error = function(e) keys)
+    }
+    if (length(labels) != length(keys)) labels <- keys
+    out[[aesthetic]] <- list(keys = keys, values = stats::setNames(as_hex(values), keys),
+                             labels = labels)
+  }
+  out
+}
+
+# The same scale with new colors, so its name, guide, breaks and labels stay. A
+# plot with no scale of its own gets a manual one, which is all it had to lose.
+recolored_scale <- function(plot, aesthetic, values) {
+  manual <- if (aesthetic == "fill") ggplot2::scale_fill_manual else ggplot2::scale_colour_manual
+  own <- plot$scales$get_scales(aesthetic)
+  if (is.null(own)) return(manual(values = values))
+  if (inherits(own, "ScaleDiscreteIdentity")) {
+    return(manual(values = values, name = own$name, guide = own$guide))
+  }
+  scale <- own$clone()
+  scale$palette <- function(n) values
+  scale$palette.cache <- NULL
+  scale$n.breaks.cache <- NULL
+  scale
+}
+
+# A color as `#RRGGBB`, the form a color picker shows. `NA` stays `NA`.
+as_hex <- function(colors) {
+  vapply(colors, function(color) {
+    if (is.na(color)) return(NA_character_)
+    rgb <- grDevices::col2rgb(color)
+    sprintf("#%02X%02X%02X", rgb[[1]], rgb[[2]], rgb[[3]])
+  }, character(1), USE.NAMES = FALSE)
 }
 
 # --- the parameters a customizer can offer -----------------------------------
@@ -384,6 +525,8 @@ customizer_apply <- function(customizer, plot, values) {
 #'   `TRUE` and `FALSE`, say. One per key.
 #' @param to What each key maps to: `"color"`, `"text"` or `"number"`.
 #' @param min,max,step Bounds and increment for `param_number()`. Optional.
+#' @param multiline Whether the text may run over several lines, as a caption
+#'   often does, so a program offers a box rather than a single line.
 #'
 #' @return A parameter.
 #'
@@ -402,8 +545,11 @@ NULL
 
 #' @rdname param
 #' @export
-param_text <- function(label, default = NULL) {
-  new_param("text", label, default)
+param_text <- function(label, default = NULL, multiline = FALSE) {
+  if (!is.logical(multiline) || length(multiline) != 1L || is.na(multiline)) {
+    cli::cli_abort("{.arg multiline} must be {.code TRUE} or {.code FALSE}.")
+  }
+  new_param("text", label, default, multiline = multiline)
 }
 
 #' @rdname param
@@ -554,20 +700,14 @@ check_customizer_fun <- function(fun, arg, call = parent.frame()) {
 # for anything that only exists in the session that wrote it. The collection's
 # own functions travel with it, so their names are `known`.
 check_travels <- function(fun, what, known = character(), call = parent.frame()) {
-  globals <- codetools::findGlobals(fun, merge = FALSE)
-  names <- setdiff(c(globals$variables, globals$functions), known)
-  env <- environment(fun)
-  # Only a name that lives in the writing session is a risk. A name bound nowhere is
-  # usually a data column (`aes(fill = brand)`, `filter(brand == ...)`), and a
-  # function bound nowhere is a package that is not attached right now.
-  risky <- names[vapply(names, binding_of, character(1), env) == "session"]
+  risky <- travel_risks(fun, known)
   if (length(risky)) {
     cli::cli_abort(
       c(
-        "{what} uses {length(risky)} name{?s} from this session: {.val {risky}}.",
+        "{what} uses {length(risky)} name{?s} another session will not have: {.val {risky}}.",
         "i" = "A collection is read back in another session, where that is gone.",
-        "i" = "Give a function to {.arg functions} in {.fn plots_init}, or pass a value in
-               as a parameter."
+        "i" = "Qualify a package function ({.code stringr::str_wrap()}), give a function to
+               {.arg functions} in {.fn plots_init}, or pass a value in as a parameter."
       ),
       call = call
     )
@@ -575,14 +715,38 @@ check_travels <- function(fun, what, known = character(), call = parent.frame())
   invisible(fun)
 }
 
+# Packages a reader is sure to have attached, so their functions may go
+# unqualified.
+travel_safe <- c("base", "stats", "utils", "graphics", "grDevices", "methods", "datasets",
+                 "ggplot2", "ggview")
+
+# The names a function uses that another session will not have: those bound in
+# this session, and those found only in an attached package a reader may not
+# attach, shown as `str_wrap (stringr)`. A name bound nowhere is usually a data
+# column (`aes(fill = brand)`, `filter(brand == ...)`), so it passes.
+travel_risks <- function(fun, known = character()) {
+  # codetools warns about `...` in closures it cannot place; that is not ours to report.
+  globals <- suppressWarnings(codetools::findGlobals(fun, merge = FALSE))
+  names <- setdiff(c(globals$variables, globals$functions), known)
+  where <- vapply(names, binding_of, character(1), environment(fun))
+  attached <- startsWith(where, "package:")
+  package <- sub("^package:", "", where)
+  risky <- where == "session" | (attached & !package %in% travel_safe)
+  ifelse(where[risky] == "session", names[risky],
+         paste0(names[risky], " (", package[risky], ")"))
+}
+
 # Where a name binds, starting from a function's own environment. "local" means
-# it travels with the function, in a package or in the function's own closure.
-# "session" means it lives in the session that wrote the customizer and nowhere
-# else. "nowhere" means it cannot be found at all right now.
+# it travels with the function, in a package namespace or in the function's own
+# closure. "session" means it lives in the session that wrote the customizer and
+# nowhere else. "package:<name>" means an attached package on the search path.
+# "nowhere" means it cannot be found at all right now.
 binding_of <- function(name, env) {
   while (!identical(env, emptyenv())) {
     if (exists(name, envir = env, inherits = FALSE)) {
-      return(if (identical(env, globalenv())) "session" else "local")
+      if (identical(env, globalenv())) return("session")
+      label <- environmentName(env)
+      return(if (startsWith(label, "package:")) label else "local")
     }
     env <- parent.env(env)
   }

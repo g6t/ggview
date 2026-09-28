@@ -17,7 +17,19 @@
 #'   The collection keeps each customizer once, under a name, and each plot
 #'   names the one it uses. The functions in `functions` travel with the
 #'   collection, so every customizer can call them by name instead of repeating
-#'   them.
+#'   them. Themes are kept once too: plots that share a theme store one copy,
+#'   and [plots_get()] puts it back.
+#'
+#'   A collection is read back in other sessions, so what it carries must not
+#'   depend on this one. `plots_init()` refuses a customizer or function that
+#'   uses a name from the session, or an unqualified function from an attached
+#'   package other than base R, ggplot2 and ggview: write `stringr::str_wrap()`,
+#'   not `str_wrap()`.
+#'
+#' @section Options:
+#'   `options(ggview.quiet = TRUE)` silences the one-line reports of
+#'   [plots_append()], [plots_get()], [plots_reset()] and [save_plots()], for
+#'   loops over many plots. Warnings still show.
 #'
 #' @param name A name for the collection, for whatever shows it to people.
 #' @param description One line saying what the collection is.
@@ -30,7 +42,7 @@
 #'   can call each other too. Use them for what several customizers share.
 #'
 #' @return An empty collection of class `plots_tbl`, with columns `id`, `name`,
-#'   `type`, `width`, `height`, `plot`, `customizer` and `values`.
+#'   `type`, `width`, `height`, `plot`, `customizer`, `theme` and `values`.
 #'
 #' @seealso [plots_append()], [plots_get()], [plots_set()], [plots_params()].
 #'
@@ -86,6 +98,7 @@ plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
       height     = double(),
       plot       = list(),
       customizer = character(),
+      theme      = character(),
       values     = list()
     ),
     meta = list(
@@ -93,7 +106,9 @@ plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
       description = description,
       dims        = dims,
       customizers = customizers,
-      functions   = functions
+      functions   = functions,
+      themes      = list(),
+      packages    = character()
     )
   )
 }
@@ -105,6 +120,12 @@ plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
 #'   in place and keeps its `id` and the changes recorded against it, so
 #'   re-running a chunk is safe. A change the new plot no longer accepts is
 #'   dropped, and `...` replaces a change of the same name.
+#'
+#'   The plot's theme goes to the collection's store, which keeps one copy of
+#'   each distinct theme. A plot whose scales, layers or facets carry a function
+#'   that uses a name from this session, or an unqualified function from an
+#'   attached package, draws here and fails elsewhere, so it is added with a
+#'   warning that names it.
 #'
 #' @param plots A collection, from [plots_init()].
 #' @param plot A ggplot object.
@@ -164,6 +185,17 @@ plots_append <- function(plots, plot, name, type = NA_character_,
   height <- height %||% on_plot$height %||% size$height
 
   values <- check_values(list(...), customizer, plot)
+  warn_plot_travel(plot, name)
+
+  # One copy of each distinct theme, in the collection. The packages that draw
+  # its elements are recorded, because reading a collection does not load them.
+  theme_key <- rlang::hash(plot$theme)
+  if (is.null(meta$themes[[theme_key]])) {
+    meta$themes[[theme_key]] <- plot$theme
+    meta$packages <- union(meta$packages, theme_packages(plot$theme))
+  }
+  stored <- plot
+  stored$theme <- ggplot2::theme()
 
   row <- tibble::tibble(
     id         = plots_new_id(plots$id),
@@ -171,8 +203,9 @@ plots_append <- function(plots, plot, name, type = NA_character_,
     type       = as.character(type),
     width      = check_size(width, "width"),
     height     = check_size(height, "height"),
-    plot       = list(plot),
+    plot       = list(stored),
     customizer = row_customizer,
+    theme      = theme_key,
     values     = list(values)
   )
 
@@ -189,12 +222,14 @@ plots_append <- function(plots, plot, name, type = NA_character_,
     out[i, ] <- row
     verb <- "Updated"
   }
-  out <- new_plots_tbl(out, meta = meta)
+  out <- new_plots_tbl(out, meta = keep_used_themes(meta, out))
 
   n <- nrow(out)
-  cli::cli_alert_success(
-    "{verb} {.val {name}} \u2014 {plots_describe(row$type, row$width, row$height)}. {n} plot{?s} in the collection."
-  )
+  if (!plots_quiet()) {
+    cli::cli_alert_success(
+      "{verb} {.val {name}} \u2014 {plots_describe(row$type, row$width, row$height)}. {n} plot{?s} in the collection."
+    )
+  }
 
   if (isTRUE(show)) print(plots_pull(out, match(name, out$name)))
   out
@@ -233,16 +268,18 @@ plots_get <- function(plots, name = NULL, id = NULL) {
   check_plots(plots)
   i <- plots_locate(plots, name, id, .last = TRUE)
   size <- plots_size(plots, i)
-  cli::cli_alert_info(
-    "{.val {plots$name[[i]]}} \u2014 {plots_describe(plots$type[[i]], size$width, size$height)}."
-  )
+  if (!plots_quiet()) {
+    cli::cli_alert_info(
+      "{.val {plots$name[[i]]}} \u2014 {plots_describe(plots$type[[i]], size$width, size$height)}."
+    )
+  }
   plots_pull(plots, i)
 }
 
 # One plot by row number, without the message. Everything that takes several
 # plots at once goes through here.
 plots_pull <- function(plots, i) {
-  plot <- plots$plot[[i]]
+  plot <- plots_plot(plots, i)
   values <- plots$values[[i]]
   changes <- values[setdiff(names(values), plots_reserved)]
 
@@ -341,7 +378,7 @@ plots_set <- function(plots, name = NULL, id = NULL, ...,
                 width = width, height = height)
   changes <- c(named[!vapply(named, is.null, logical(1))], list(...))
   changes <- check_values(
-    changes, plots_customizer(plots, i), plots$plot[[i]],
+    changes, plots_customizer(plots, i), plots_plot(plots, i),
     geometry = geometry_params(plots$width[[i]], plots$height[[i]]),
     existing = plots$values[[i]]
   )
@@ -411,7 +448,9 @@ plots_reset <- function(plots, name = NULL, id = NULL, params = NULL,
     dropped <- dropped + length(values) - length(keep)
     plots$values[[i]] <- if (length(keep)) values[keep] else list()
   }
-  cli::cli_alert_success("Reset {dropped} change{?s} on {length(rows)} plot{?s}.")
+  if (!plots_quiet()) {
+    cli::cli_alert_success("Reset {dropped} change{?s} on {length(rows)} plot{?s}.")
+  }
 
   if (isTRUE(show) && length(rows) == 1L) print(plots_pull(plots, rows))
   plots
@@ -475,7 +514,7 @@ plots_params <- function(plots, name = NULL, id = NULL) {
   check_plots(plots)
   i <- plots_locate(plots, name, id, .last = TRUE)
 
-  params <- customizer_params(plots_customizer(plots, i), plots$plot[[i]])
+  params <- customizer_params(plots_customizer(plots, i), plots_plot(plots, i))
   values <- plots$values[[i]]
   records <- lapply(names(params), function(key) {
     param_record(key, params[[key]], values[[key]])
@@ -498,13 +537,14 @@ param_record <- function(key, param, value) {
 
 #' @title What a collection is
 #' @description The collection's own details, rather than any one plot's: the
-#'   name and description given to [plots_init()], how many plots it holds, and
-#'   the names of its customizers and functions.
+#'   name and description given to [plots_init()], how many plots it holds, the
+#'   names of its customizers and functions, how many distinct themes it
+#'   stores, and the packages its plots need to draw.
 #'
 #' @param plots A collection, from [plots_init()].
 #'
-#' @return A list of `name`, `description`, `plots`, `customizers` and
-#'   `functions`.
+#' @return A list of `name`, `description`, `plots`, `customizers`,
+#'   `functions`, `themes` and `packages`.
 #'
 #' @examples
 #' plots_meta(plots_init(name = "Brand tracker", description = "Q3 wave"))
@@ -518,7 +558,9 @@ plots_meta <- function(plots) {
     description = meta$description,
     plots       = nrow(plots),
     customizers = names(meta$customizers),
-    functions   = names(meta$functions)
+    functions   = names(meta$functions),
+    themes      = length(meta$themes),
+    packages    = meta$packages
   )
 }
 
@@ -579,8 +621,57 @@ new_plots_tbl <- function(x, meta = NULL) {
 plots_meta_default <- function() {
   list(
     name = NULL, description = NULL, dims = plots_dims(),
-    customizers = list(default = customizer_default()), functions = list()
+    customizers = list(default = customizer_default()), functions = list(),
+    themes = list(), packages = character()
   )
+}
+
+plots_quiet <- function() isTRUE(getOption("ggview.quiet"))
+
+# The stored plot with its theme back from the collection's store.
+plots_plot <- function(plots, i) {
+  meta <- plots_meta_raw(plots)
+  load_packages(meta$packages)
+  plot <- plots$plot[[i]]
+  theme <- meta$themes[[plots$theme[[i]]]]
+  if (is.null(theme)) {
+    cli::cli_abort(c(
+      "The theme of {.val {plots$name[[i]]}} is not in the collection.",
+      "i" = "A collection saved by an earlier ggview has to be built again."
+    ), call = NULL)
+  }
+  # Anything added to the stored plot since goes on top of the stored theme.
+  plot$theme <- if (length(plot$theme)) theme + plot$theme else theme
+  plot
+}
+
+# A theme element drawn by another package, such as a ggtext textbox, is plain
+# data: nothing in it makes reading the collection load that package.
+theme_packages <- function(theme) {
+  classes <- unique(unlist(lapply(theme, class)))
+  found <- vapply(classes, function(cls) {
+    method <- utils::getS3method("element_grob", cls, optional = TRUE,
+                                 envir = asNamespace("ggplot2"))
+    if (is.null(method)) "" else environmentName(topenv(environment(method)))
+  }, character(1))
+  setdiff(unique(found), c("", "base", "ggplot2", "R_GlobalEnv"))
+}
+
+load_packages <- function(packages) {
+  missing <- packages[!vapply(packages, requireNamespace, logical(1), quietly = TRUE)]
+  if (length(missing)) {
+    cli::cli_abort(c(
+      "Drawing these plots needs {.pkg {missing}}, which {?is/are} not installed.",
+      "i" = "Install {?it/them}, then read the collection again."
+    ), call = NULL)
+  }
+}
+
+# Themes no plot uses any more are dropped, so a filtered collection carries
+# only its own.
+keep_used_themes <- function(meta, x) {
+  meta$themes <- meta$themes[intersect(names(meta$themes), unique(x$theme))]
+  meta
 }
 
 plots_meta_raw <- function(x) {
@@ -608,10 +699,21 @@ plots_customizer <- function(plots, i) {
   bind_functions(customizer, meta$functions)
 }
 
-# Keep the class and the collection's own details through dplyr verbs.
+# Keep the class and the collection's own details through dplyr verbs, as long
+# as the result still holds plots. A summary such as `count()` does not, and is
+# a plain tibble.
 #' @exportS3Method dplyr::dplyr_reconstruct
 dplyr_reconstruct.plots_tbl <- function(data, template) {
-  new_plots_tbl(NextMethod(), meta = plots_meta_raw(template))
+  restore_plots_tbl(NextMethod(), template)
+}
+
+plots_columns <- c("id", "name", "type", "width", "height", "plot", "customizer",
+                   "theme", "values")
+
+restore_plots_tbl <- function(out, template) {
+  if (!is.data.frame(out)) return(out)
+  if (!all(plots_columns %in% names(out))) return(as_tibble.plots_tbl(out))
+  new_plots_tbl(out, meta = keep_used_themes(plots_meta_raw(template), out))
 }
 
 # `as_tibble()` is the way out of the listing: it gives the plain tibble, which
@@ -625,8 +727,7 @@ as_tibble.plots_tbl <- function(x, ...) {
 
 #' @export
 `[.plots_tbl` <- function(x, ...) {
-  out <- NextMethod()
-  if (is.data.frame(out)) new_plots_tbl(out, meta = plots_meta_raw(x)) else out
+  restore_plots_tbl(NextMethod(), x)
 }
 
 # An id only has to be unique within its collection, and tempfile() gives one
@@ -939,6 +1040,61 @@ check_named_list <- function(x, arg, call = parent.frame()) {
     cli::cli_abort("Every entry in {.arg {arg}} needs a name of its own.", call = call)
   }
   invisible(x)
+}
+
+# A plot carries functions of its own: a scale's labels or breaks, a layer's
+# data, a stat's `fun`, a facet's labeller. One that reaches for this session
+# draws here and fails wherever the collection is read.
+warn_plot_travel <- function(plot, name) {
+  risks <- character()
+  check <- function(where, fun) {
+    found <- unique(unlist(lapply(wrapped_functions(fun), travel_risks)))
+    if (length(found)) risks[[where]] <<- paste(found, collapse = ", ")
+  }
+  for (scale in plot$scales$scales) {
+    for (field in c("labels", "breaks", "minor_breaks", "limits", "oob", "rescaler", "palette")) {
+      value <- tryCatch(scale[[field]], error = function(e) NULL)
+      if (is.function(value)) check(paste(scale$aesthetics[[1]], "scale", field), value)
+    }
+  }
+  for (j in seq_along(plot$layers)) {
+    layer <- plot$layers[[j]]
+    if (is.function(layer$data)) check(paste("layer", j, "data"), layer$data)
+    for (part in c("stat_params", "geom_params", "aes_params")) {
+      for (key in names(layer[[part]])) {
+        if (is.function(layer[[part]][[key]])) check(paste("layer", j, key), layer[[part]][[key]])
+      }
+    }
+  }
+  labeller <- tryCatch(plot$facet$params$labeller, error = function(e) NULL)
+  if (is.function(labeller)) check("facet labeller", labeller)
+  if (length(risks)) {
+    cli::cli_warn(c(
+      "{.val {name}} carries functions that will not work where the collection is read:",
+      stats::setNames(paste0(names(risks), ": ", risks), rep("x", length(risks))),
+      "i" = "Qualify each one, such as {.code stringr::str_wrap()}, or use {.pkg scales}
+             helpers such as {.code scales::label_wrap()}."
+    ), call = NULL)
+  }
+  invisible(plot)
+}
+
+# A function and the ones it wraps. ggplot2 keeps a scale's `labels` inside a
+# closure of its own, so the function given sits one environment down.
+wrapped_functions <- function(fun, depth = 2L) {
+  out <- list(fun)
+  env <- environment(fun)
+  if (depth < 1L || is.null(env) || isNamespace(env) || identical(env, globalenv()) ||
+      identical(env, emptyenv()) || startsWith(environmentName(env), "package:")) {
+    return(out)
+  }
+  for (name in ls(env, all.names = TRUE)) {
+    value <- tryCatch(get(name, envir = env, inherits = FALSE), error = function(e) NULL)
+    if (is.function(value) && !is.primitive(value)) {
+      out <- c(out, wrapped_functions(value, depth - 1L))
+    }
+  }
+  out
 }
 
 # --- small helpers -----------------------------------------------------------

@@ -11,7 +11,7 @@
 \alias{param_mapping}
 \title{Parameters a customizer offers}
 \usage{
-param_text(label, default = NULL)
+param_text(label, default = NULL, multiline = FALSE)
 
 param_number(label, default = NULL, min = NULL, max = NULL, step = NULL)
 
@@ -35,6 +35,9 @@ param_mapping(
 \item{label}{What to call the parameter, for a person reading it.}
 
 \item{default}{The value the plot already has. \code{NULL} when it has none.}
+
+\item{multiline}{Whether the text may run over several lines, as a caption
+often does, so a program offers a box rather than a single line.}
 
 \item{min, max, step}{Bounds and increment for \code{param_number()}. Optional.}
 
