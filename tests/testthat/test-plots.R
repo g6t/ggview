@@ -1043,3 +1043,22 @@ test_that("plots_changes_code() writes any key as a name R reads back", {
   expect_equal(plots_changes(rebuilt), plots_changes(plots))
   expect_setequal(plots_changes(rebuilt)$key, keys)
 })
+
+test_that("a plot whose aes() calls an unqualified package function is added with a warning", {
+  skip_if_not_installed("dplyr")
+  withr::local_package("dplyr")
+  bare <- ggplot2::ggplot(mtcars, ggplot2::aes(wt, desc(mpg))) +
+    ggplot2::geom_point(ggplot2::aes(color = if_else(am == 1, "manual", "automatic")))
+  expect_warning(
+    quietly(plots_append(plots_init(), bare, name = "a", show = FALSE)),
+    "plot y: desc \\(dplyr\\)"
+  )
+  expect_warning(
+    quietly(plots_append(plots_init(), bare, name = "a", show = FALSE)),
+    "layer 1 colour: if_else \\(dplyr\\)"
+  )
+  # Qualified calls, base R, ggplot2 and bare columns all travel.
+  fine <- ggplot2::ggplot(mtcars, ggplot2::aes(wt, dplyr::desc(mpg), fill = factor(cyl))) +
+    ggplot2::geom_bar(ggplot2::aes(y = ggplot2::after_stat(count)), stat = "count")
+  expect_no_warning(quietly(plots_append(plots_init(), fine, name = "a", show = FALSE)))
+})

@@ -1103,7 +1103,8 @@ check_named_list <- function(x, arg, call = parent.frame()) {
 }
 
 # A plot carries functions of its own: a scale's labels or breaks, a layer's
-# data, a stat's `fun`, a facet's labeller. One that reaches for this session
+# data, a stat's `fun`, a facet's labeller, and the calls in its mappings. One
+# that reaches for this session, or for a package the reader may not attach,
 # draws here and fails wherever the collection is read.
 warn_plot_travel <- function(plot, name) {
   risks <- character()
@@ -1128,12 +1129,24 @@ warn_plot_travel <- function(plot, name) {
   }
   labeller <- tryCatch(plot$facet$params$labeller, error = function(e) NULL)
   if (is.function(labeller)) check("facet labeller", labeller)
+  mappings <- c(list(plot = plot$mapping),
+                stats::setNames(lapply(plot$layers, function(l) l$mapping),
+                                paste("layer", seq_along(plot$layers))))
+  for (where in names(mappings)) {
+    for (aesthetic in names(mappings[[where]])) {
+      q <- mappings[[where]][[aesthetic]]
+      if (!rlang::is_quosure(q)) next
+      found <- mapping_risks(q)
+      if (length(found)) risks[[paste(where, aesthetic)]] <- paste(found, collapse = ", ")
+    }
+  }
   if (length(risks)) {
     cli::cli_warn(c(
       "{.val {name}} carries functions that will not work where the collection is read:",
       stats::setNames(paste0(names(risks), ": ", risks), rep("x", length(risks))),
-      "i" = "Qualify each one, such as {.code stringr::str_wrap()}, or use {.pkg scales}
-             helpers such as {.code scales::label_wrap()}."
+      "i" = "Qualify each one, such as {.code stringr::str_wrap()} or
+             {.code forcats::fct_rev()} in {.fn aes}, or use {.pkg scales} helpers such as
+             {.code scales::label_wrap()}."
     ), call = NULL)
   }
   invisible(plot)

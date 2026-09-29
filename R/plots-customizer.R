@@ -736,6 +736,19 @@ travel_risks <- function(fun, known = character()) {
          paste0(names[risky], " (", package[risky], ")"))
 }
 
+# The functions a mapping calls that a reader will not have, as travel_risks() names them. A
+# mapping is evaluated where the plot is drawn, so `aes(y = fct_rev(brand))` needs forcats
+# there. Only calls count: the other names in a mapping are data columns.
+mapping_risks <- function(quo) {
+  env <- rlang::quo_get_env(quo)
+  fun <- rlang::new_function(list(), rlang::quo_get_expr(quo), env)
+  calls <- suppressWarnings(codetools::findGlobals(fun, merge = FALSE))$functions
+  where <- vapply(calls, binding_of, character(1), env)
+  package <- sub("^package:", "", where)
+  risky <- where == "session" | (startsWith(where, "package:") & !package %in% travel_safe)
+  ifelse(where[risky] == "session", calls[risky], paste0(calls[risky], " (", package[risky], ")"))
+}
+
 # Where a name binds, starting from a function's own environment. "local" means
 # it travels with the function, in a package namespace or in the function's own
 # closure. "session" means it lives in the session that wrote the customizer and
