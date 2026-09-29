@@ -4,12 +4,12 @@
 \alias{plots_as_content}
 \title{A collection as a content table}
 \usage{
-plots_as_content(plots, path = "plots", extension = "png")
+plots_as_content(plots, path = NULL, extension = "png")
 }
 \arguments{
 \item{plots}{A collection, from \code{\link[=plots_init]{plots_init()}}.}
 
-\item{path}{Folder to write into.}
+\item{path}{Folder to write into. The collection's path when \code{NULL}.}
 
 \item{extension}{File type, and the file extension.}
 }
@@ -22,13 +22,20 @@ Shapes a collection for bulk writers that take a table of
 objects rather than a list: one row per plot, holding the plot, the path to
 write it to, and the file type. The plot names become the paths, so slashes
 in them stay as folders.
+
+The folder is the collection's own path, from \code{\link[=plots_init]{plots_init()}} or
+\code{\link[=plots_set_path]{plots_set_path()}}, unless \code{path} gives another one for this write. To
+write only some plots, filter the collection first.
 }
 \examples{
 library(ggplot2)
-plots <- plots_init()
+plots <- plots_init(path = "results/2026-09/plots")
 plots <- plots_append(plots, ggplot(mtcars, aes(wt, mpg)) + geom_point(),
                       name = "Basics/scatter", show = FALSE)
 
 plots_as_content(plots)
+
+# Somewhere else for this write only, and only some plots.
+plots_as_content(plots[plots$name == "Basics/scatter", ], path = "drafts")
 
 }

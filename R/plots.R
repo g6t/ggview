@@ -14,6 +14,11 @@
 #'   Collect plots with [plots_append()], take one out with [plots_get()],
 #'   change one with [plots_set()], and write them all with [save_plots()].
 #'
+#'   `path` says where the collection's files go, as a folder relative to the
+#'   root of whatever writes them. [plots_as_content()] uses it, so the
+#'   collection itself records where it was delivered. [plots_set_path()]
+#'   changes it later.
+#'
 #'   The collection keeps each customizer once, under a name, and each plot
 #'   names the one it uses. The functions in `functions` travel with the
 #'   collection, so every customizer can call them by name instead of repeating
@@ -33,6 +38,9 @@
 #'
 #' @param name A name for the collection, for whatever shows it to people.
 #' @param description One line saying what the collection is.
+#' @param path Folder the collection's files go to, for example
+#'   `"results/2026-09/plots/US"`. It is relative, with a slash between
+#'   folders and none at either end. `NULL` for none yet.
 #' @param dims Default canvas size per plot type, from [plots_dims()].
 #' @param customizers What plots in this collection let people change: a named
 #'   list of [customizer()]s. A plot names one in [plots_append()], and
@@ -59,6 +67,9 @@
 #' # Wider heatmaps than the default, for every plot in this collection.
 #' plots_init(dims = plots_dims(heatmap = c(18, 11)))
 #'
+#' # Where the files go, for plots_as_content().
+#' plots_init(name = "Brand tracker", path = "results/2026-09/plots")
+#'
 #' # One shared function, used by a customizer that plots name.
 #' shades <- customizer_extend(
 #'   customizer_default(),
@@ -78,10 +89,11 @@
 #'                       show = FALSE)
 #'
 #' @export
-plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
-                       customizers = list(), functions = list()) {
+plots_init <- function(name = NULL, description = NULL, path = NULL,
+                       dims = plots_dims(), customizers = list(), functions = list()) {
   check_line(name, "name")
   check_line(description, "description")
+  check_path(path)
   check_dims(dims)
   functions <- check_functions(functions)
   customizers <- check_customizers(customizers, known = names(functions))
@@ -104,6 +116,7 @@ plots_init <- function(name = NULL, description = NULL, dims = plots_dims(),
     meta = list(
       name        = name,
       description = description,
+      path        = path,
       dims        = dims,
       customizers = customizers,
       functions   = functions,
@@ -537,13 +550,13 @@ param_record <- function(key, param, value) {
 
 #' @title What a collection is
 #' @description The collection's own details, rather than any one plot's: the
-#'   name and description given to [plots_init()], how many plots it holds, the
-#'   names of its customizers and functions, how many distinct themes it
-#'   stores, and the packages its plots need to draw.
+#'   name, description and path given to [plots_init()], how many plots it
+#'   holds, the names of its customizers and functions, how many distinct
+#'   themes it stores, and the packages its plots need to draw.
 #'
 #' @param plots A collection, from [plots_init()].
 #'
-#' @return A list of `name`, `description`, `plots`, `customizers`,
+#' @return A list of `name`, `description`, `path`, `plots`, `customizers`,
 #'   `functions`, `themes` and `packages`.
 #'
 #' @examples
@@ -556,12 +569,39 @@ plots_meta <- function(plots) {
   list(
     name        = meta$name,
     description = meta$description,
+    path        = meta$path,
     plots       = nrow(plots),
     customizers = names(meta$customizers),
     functions   = names(meta$functions),
     themes      = length(meta$themes),
     packages    = meta$packages
   )
+}
+
+#' @title Change where a collection's files go
+#' @description Sets the folder [plots_as_content()] writes the collection to.
+#'   The plots and their changes stay as they are. Files already written to
+#'   the old folder stay there too: the collection only records where it goes
+#'   next.
+#'
+#' @param plots A collection, from [plots_init()].
+#' @param path Folder the files go to, relative, with a slash between folders
+#'   and none at either end. `NULL` takes the path away.
+#'
+#' @return The collection, with the new path.
+#'
+#' @examples
+#' plots <- plots_init(path = "results/2026-06/plots")
+#' plots <- plots_set_path(plots, "results/2026-09/plots")
+#' plots_meta(plots)$path
+#'
+#' @export
+plots_set_path <- function(plots, path) {
+  check_plots(plots)
+  check_path(path)
+  meta <- plots_meta_raw(plots)
+  meta["path"] <- list(path)
+  new_plots_tbl(plots, meta = meta)
 }
 
 #' @title Show a plot from the collection that was printed last
@@ -620,7 +660,7 @@ new_plots_tbl <- function(x, meta = NULL) {
 
 plots_meta_default <- function() {
   list(
-    name = NULL, description = NULL, dims = plots_dims(),
+    name = NULL, description = NULL, path = NULL, dims = plots_dims(),
     customizers = list(default = customizer_default()), functions = list(),
     themes = list(), packages = character()
   )
@@ -902,6 +942,26 @@ check_line <- function(text, arg, call = parent.frame()) {
     cli::cli_abort("{.arg {arg}} must be a single string, or {.code NULL}.", call = call)
   }
   invisible(text)
+}
+
+# A folder relative to wherever the files are written: no slash at either end,
+# no empty folder, and no `.` or `..`, which would leave that root.
+check_path <- function(path, call = parent.frame()) {
+  if (is.null(path)) return(invisible(NULL))
+  if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path)) {
+    cli::cli_abort("{.arg path} must be a single non-empty string, or {.code NULL}.",
+                   call = call)
+  }
+  parts <- strsplit(path, "/", fixed = TRUE)[[1]]
+  if (grepl("\\\\", path) || grepl("^/|/$|//", path) || any(parts %in% c(".", ".."))) {
+    cli::cli_abort(
+      c("{.arg path} must be a relative folder: {.val {path}}.",
+        "i" = "Separate folders with {.code /}, with none at either end and no {.code .} or {.code ..},
+               for example {.val results/2026-09/plots}."),
+      call = call
+    )
+  }
+  invisible(path)
 }
 
 check_type <- function(type, call = parent.frame()) {

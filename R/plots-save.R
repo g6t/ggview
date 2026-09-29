@@ -59,8 +59,12 @@ save_plots <- function(plots, dir = ".", device = "png", ...) {
 #'   write it to, and the file type. The plot names become the paths, so slashes
 #'   in them stay as folders.
 #'
+#'   The folder is the collection's own path, from [plots_init()] or
+#'   [plots_set_path()], unless `path` gives another one for this write. To
+#'   write only some plots, filter the collection first.
+#'
 #' @param plots A collection, from [plots_init()].
-#' @param path Folder to write into.
+#' @param path Folder to write into. The collection's path when `NULL`.
 #' @param extension File type, and the file extension.
 #'
 #' @return A tibble of `object`, `name` and `type`, one row per plot. The paths
@@ -68,27 +72,38 @@ save_plots <- function(plots, dir = ".", device = "png", ...) {
 #'
 #' @examples
 #' library(ggplot2)
-#' plots <- plots_init()
+#' plots <- plots_init(path = "results/2026-09/plots")
 #' plots <- plots_append(plots, ggplot(mtcars, aes(wt, mpg)) + geom_point(),
 #'                       name = "Basics/scatter", show = FALSE)
 #'
 #' plots_as_content(plots)
 #'
+#' # Somewhere else for this write only, and only some plots.
+#' plots_as_content(plots[plots$name == "Basics/scatter", ], path = "drafts")
+#'
 #' @export
-plots_as_content <- function(plots, path = "plots", extension = "png") {
+plots_as_content <- function(plots, path = NULL, extension = "png") {
   check_plots(plots)
+  if (nrow(plots) == 0) {
+    cli::cli_abort(c(
+      "The collection is empty.",
+      "i" = "Add a plot with {.fn plots_append}."
+    ))
+  }
+  path <- path %||% plots_meta_raw(plots)$path
+  if (is.null(path)) {
+    cli::cli_abort(c(
+      "The collection has no path, and none was given.",
+      "i" = "Set one with {.code plots_init(path = )} or {.fn plots_set_path}, or pass
+             {.arg path} here."
+    ))
+  }
   if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path)) {
     cli::cli_abort("{.arg path} must be a single non-empty string.")
   }
   if (!is.character(extension) || length(extension) != 1L || is.na(extension) ||
       !nzchar(extension)) {
     cli::cli_abort("{.arg extension} must be a single non-empty string.")
-  }
-  if (nrow(plots) == 0) {
-    cli::cli_abort(c(
-      "The collection is empty.",
-      "i" = "Add a plot with {.fn plots_append}."
-    ))
   }
 
   # Bulk writers read the path from the names of `name`, so it carries it twice.

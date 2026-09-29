@@ -30,7 +30,8 @@ library(tibble)
 ## Start a collection and add to it
 
 `plots_init()` starts one and `plots_append()` adds to it. The name is the
-plot's key, and slashes in it make folders later on.
+plot's key, and slashes in it make folders later on. The collection's `path`
+says where its files go when it is written out.
 
 ```{r}
 weight <- ggplot(mtcars, aes(wt, mpg, color = factor(cyl))) +
@@ -41,7 +42,8 @@ cylinders <- ggplot(mtcars, aes(factor(cyl))) +
   geom_bar() +
   labs(title = "Most of these cars are eight-cylinder")
 
-plots <- plots_init(name = "Engine notes", description = "Two plots from mtcars")
+plots <- plots_init(name = "Engine notes", description = "Two plots from mtcars",
+                    path = "results/engine")
 plots <- plots_append(plots, weight, name = "Engine/weight", type = "point")
 plots <- plots_append(plots, cylinders, name = "Engine/cylinders", type = "bar")
 ```
@@ -157,7 +159,7 @@ A collection keeps each customizer once, under a name you give it in
 
 ```{r}
 plots <- plots_init(name = "Engine notes", description = "Two plots from mtcars",
-                    customizers = list(targeted = targeted))
+                    path = "results/engine", customizers = list(targeted = targeted))
 plots <- plots_append(plots, weight, name = "Engine/weight", type = "point",
                       customizer = "targeted")
 plots <- plots_append(plots, cylinders, name = "Engine/cylinders", type = "bar")
@@ -260,10 +262,14 @@ list.files(dir, recursive = TRUE)
 ```
 
 `plots_as_content()` gives the same plots as a table of objects and paths, for
-writers that take one.
+writers that take one. The paths start with the collection's own `path`. Filter
+the collection to write only some plots, and give `path` here to write somewhere
+else once. `plots_set_path()` moves the collection itself.
 
 ```{r}
 plots_as_content(plots)$name
+
+plots_as_content(plots[plots$name == "Engine/weight", ], path = "drafts")$name
 ```
 
 ## Store it and pick it up again
@@ -289,6 +295,21 @@ function's local objects, so a builder function that holds a large object in
 scope makes a large file. A complete theme is about 2 MB in `ggplot2` 4.0, so
 the collection keeps each distinct theme once and gives it back to every plot
 that uses it. `plots_meta()` says how many it holds.
+
+## Carry changes back into the script
+
+A stored collection can be changed outside the script that built it, for
+example in a viewer that saves it back. The next run of the script would build
+the collection again without those changes. `plots_changes()` lists them, and
+`plots_changes_code()` writes them as code for the script, after the plots are
+appended. The code starts with `plots_reset()`, so it replaces the script's own
+changes and the rebuilt collection holds exactly the stored ones.
+
+```{r}
+plots_changes(plots)
+
+plots_changes_code(plots)
+```
 
 ## Browse the whole collection
 

@@ -25,7 +25,7 @@ test_that("a new collection is empty and keeps what it was given", {
     c("id", "name", "type", "width", "height", "plot", "customizer", "theme", "values")
   )
   expect_equal(plots_meta(plots), list(name = "Bundle", description = "One line",
-                                       plots = 0L, customizers = "default",
+                                       path = NULL, plots = 0L, customizers = "default",
                                        functions = NULL, themes = 0L,
                                        packages = character()))
 
@@ -910,4 +910,136 @@ test_that("a caption may run over several lines", {
   # The listing keeps the caption on one line.
   shown <- cli::ansi_strip(utils::capture.output(print(params), type = "message"))
   expect_false(any(grepl("^Source: survey", shown)))
+})
+
+test_that("a collection keeps its path, and plots_as_content() writes there", {
+  plots <- quietly(plots_append(plots_init(path = "results/plots"), p, name = "A/one",
+                                show = FALSE))
+  expect_equal(plots_meta(plots)$path, "results/plots")
+  expect_equal(unname(plots_as_content(plots)$name), "results/plots/A/one.png")
+  # A path given here is for this write only.
+  expect_equal(unname(plots_as_content(plots, path = "drafts")$name), "drafts/A/one.png")
+  expect_equal(plots_meta(plots)$path, "results/plots")
+
+  # The path goes wherever the collection goes.
+  expect_equal(plots_meta(plots[1, ])$path, "results/plots")
+  expect_equal(plots_meta(quietly(plots_append(plots, p, name = "A/two", show = FALSE)))$path,
+               "results/plots")
+  file <- tempfile(fileext = ".rds")
+  saveRDS(plots, file)
+  expect_equal(plots_meta(readRDS(file))$path, "results/plots")
+  skip_if_not_installed("dplyr")
+  expect_equal(plots_meta(dplyr::filter(plots, name == "A/one"))$path, "results/plots")
+})
+
+test_that("plots_set_path() moves the collection and nothing else", {
+  plots <- plots_set(two_plots(), "Module 1/first", title = "Changed", show = FALSE)
+  moved <- plots_set_path(plots, "results/2026-09/plots")
+
+  expect_equal(plots_meta(moved)$path, "results/2026-09/plots")
+  expect_equal(moved$values, plots$values)
+  expect_equal(moved$id, plots$id)
+  expect_null(plots_meta(plots_set_path(moved, NULL))$path)
+  expect_error(plots_as_content(plots_set_path(moved, NULL)), "no path")
+
+  for (bad in c("/results", "results/", "a//b", "../up", "a/./b", "a\\b")) {
+    expect_error(plots_init(path = bad), "relative folder")
+  }
+  expect_error(plots_init(path = ""), "non-empty")
+  expect_error(plots_set_path(moved, c("a", "b")), "non-empty")
+  expect_error(plots_set_path(mtcars, "a"), "plots_tbl")
+})
+
+test_that("plots_changes() lists what differs from the defaults", {
+  dots <- ggplot2::ggplot(mtcars, ggplot2::aes(wt, mpg, color = factor(cyl))) +
+    ggplot2::geom_point() + ggplot2::labs(title = "Dots")
+  plots <- quietly(plots_append(plots_init(), dots, name = "Cars/dots", show = FALSE))
+  expect_equal(nrow(plots_changes(plots)), 0)
+  expect_named(plots_changes(plots), c("name", "key", "value", "default"))
+
+  default_4 <- plots_params(plots, "Cars/dots")$colors$default[["4"]]
+  plots <- plots_set(plots, "Cars/dots", title = NA, width = 9,
+                     colors = c("4" = "#36c8ef"), show = FALSE)
+  # Set to what it already is, so it is no change at all: a grid that shows
+  # anyway, a subtitle taken off a plot that has none, the declared width.
+  plots <- plots_set(plots, "Cars/dots", x_grid = TRUE, subtitle = NA, show = FALSE)
+  declared <- quietly(plots_append(plots_init(), dots, name = "d", show = FALSE))
+  declared <- plots_set(declared, "d", width = 15L, show = FALSE)
+  expect_equal(nrow(plots_changes(declared)), 0)
+
+  changes <- plots_changes(plots)
+  expect_equal(changes$key, c("title", "width", "colors"))
+  expect_equal(changes$value[[1]], NA)
+  expect_equal(changes$default[[1]], "Dots")
+  expect_equal(changes$value[[2]], 9)
+  # Only the key that changed, not the whole mapping.
+  expect_equal(changes$value[[3]], list("4" = "#36c8ef"))
+  expect_equal(changes$default[[3]][["4"]], default_4)
+})
+
+test_that("the code from plots_changes_code() makes the same changes again", {
+  dots <- ggplot2::ggplot(mtcars, ggplot2::aes(wt, mpg, color = factor(cyl))) +
+    ggplot2::geom_point()
+  build <- function() {
+    quietly({
+      plots <- plots_init(name = "Rebuilt")
+      plots <- plots_append(plots, titled, name = "Module 1/first", type = "bar", show = FALSE)
+      plots_append(plots, dots, name = "Module 1/dots", show = FALSE)
+    })
+  }
+
+  edited <- build() |>
+    plots_set_path("results/2026-09/plots") |>
+    plots_set("Module 1/first", title = "A \"quoted\" title\nover two lines",
+              caption = NA, height = 7.5, show = FALSE) |>
+    plots_set("Module 1/dots", colors = c("4" = "#36c8ef", "8" = "#e4572e"), show = FALSE)
+
+  code <- plots_changes_code(edited)
+  expect_s3_class(code, "plots_code")
+  expect_match(code, "^plots <- plots \\|>\n  plots_reset\\(show = FALSE\\) \\|>")
+  expect_match(code, 'plots_set_path("results/2026-09/plots")', fixed = TRUE)
+
+  # Run on a fresh build, the code gives the same changes and the same path.
+  plots <- build()
+  quietly(eval(parse(text = code)))
+  expect_equal(plots_changes(plots), plots_changes(edited))
+  expect_equal(plots_meta(plots)$path, "results/2026-09/plots")
+  expect_equal(plots_pull(plots, 1)$labels$title, "A \"quoted\" title\nover two lines")
+
+  expect_equal(unclass(plots_changes_code(build())),
+               "plots <- plots |>\n  plots_reset(show = FALSE)")
+  expect_match(plots_changes_code(plots_init()), "no plots")
+
+  # A change the script makes that the stored collection took away is gone again too.
+  scripted <- function() plots_set(build(), "Module 1/first", subtitle = "From the script",
+                                   width = 10, show = FALSE)
+  stored <- quietly(plots_reset(scripted(), "Module 1/first", params = "subtitle", show = FALSE))
+  stored <- plots_set(stored, "Module 1/first", width = 12, show = FALSE)
+  plots <- scripted()
+  quietly(eval(parse(text = plots_changes_code(stored))))
+  expect_equal(plots_changes(plots), plots_changes(stored))
+  expect_equal(plots_pull(plots, 1)$labels$subtitle, "Subtitle")
+  # A whole number that arrived as an integer is written as a number.
+  from_json <- plots_set(build(), "Module 1/first", width = 10L, show = FALSE)
+  expect_match(plots_changes_code(from_json), "width = 10,", fixed = TRUE)
+  expect_match(plots_changes_code(edited, object = "deck"), "^deck <- deck")
+  expect_error(plots_changes_code(edited, object = "not a name"), "variable")
+  expect_output(print(code), "plots_set_path")
+})
+
+test_that("plots_changes_code() writes any key as a name R reads back", {
+  keys <- c("a`b", "a\\b", "caf\u00e9 2", "2nd")
+  keyed <- customizer(
+    apply = function(plot, ...) plot,
+    params = function(plot) {
+      stats::setNames(lapply(keys, function(k) param_text(k)), keys)
+    }
+  )
+  plots <- quietly(plots_append(using(keyed), p, name = "k", show = FALSE))
+  values <- stats::setNames(as.list(c("one", "two", "three", "four")), keys)
+  plots <- rlang::exec(plots_set, plots, "k", !!!values, show = FALSE)
+  rebuilt <- quietly(plots_append(using(keyed), p, name = "k", show = FALSE))
+  quietly(eval(parse(text = plots_changes_code(plots, object = "rebuilt"))))
+  expect_equal(plots_changes(rebuilt), plots_changes(plots))
+  expect_setequal(plots_changes(rebuilt)$key, keys)
 })

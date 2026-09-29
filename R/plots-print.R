@@ -37,6 +37,9 @@ print.plots_tbl <- function(x, n = Inf, ...) {
     left = label,
     right = paste0("{nrow(x)} plot{?s}", if (n_folders) " in {n_folders} folder{?s}")
   )
+  if (!is.null(meta$path)) {
+    cli::cli_text(cli::col_grey("Goes to {.path {meta$path}}"))
+  }
 
   if (nrow(x) == 0) {
     cli::cli_text(cli::col_grey("Empty \u2014 add a plot with {.fn plots_append}."))

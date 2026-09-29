@@ -7,6 +7,7 @@
 plots_init(
   name = NULL,
   description = NULL,
+  path = NULL,
   dims = plots_dims(),
   customizers = list(),
   functions = list()
@@ -16,6 +17,10 @@ plots_init(
 \item{name}{A name for the collection, for whatever shows it to people.}
 
 \item{description}{One line saying what the collection is.}
+
+\item{path}{Folder the collection's files go to, for example
+\code{"results/2026-09/plots/US"}. It is relative, with a slash between
+folders and none at either end. \code{NULL} for none yet.}
 
 \item{dims}{Default canvas size per plot type, from \code{\link[=plots_dims]{plots_dims()}}.}
 
@@ -43,6 +48,11 @@ back to.
 
 Collect plots with \code{\link[=plots_append]{plots_append()}}, take one out with \code{\link[=plots_get]{plots_get()}},
 change one with \code{\link[=plots_set]{plots_set()}}, and write them all with \code{\link[=save_plots]{save_plots()}}.
+
+\code{path} says where the collection's files go, as a folder relative to the
+root of whatever writes them. \code{\link[=plots_as_content]{plots_as_content()}} uses it, so the
+collection itself records where it was delivered. \code{\link[=plots_set_path]{plots_set_path()}}
+changes it later.
 
 The collection keeps each customizer once, under a name, and each plot
 names the one it uses. The functions in \code{functions} travel with the
@@ -75,6 +85,9 @@ plots
 
 # Wider heatmaps than the default, for every plot in this collection.
 plots_init(dims = plots_dims(heatmap = c(18, 11)))
+
+# Where the files go, for plots_as_content().
+plots_init(name = "Brand tracker", path = "results/2026-09/plots")
 
 # One shared function, used by a customizer that plots name.
 shades <- customizer_extend(

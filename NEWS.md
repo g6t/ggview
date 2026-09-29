@@ -6,6 +6,9 @@
   labels, their sizes, the axis text, the legend, the gridlines and a color per category. The
   collection keeps each customizer and each distinct theme once, and refuses what would not
   work where it is read. See `vignette("plots")`.
+* A collection records where its files go: `plots_init(path = )` and `plots_set_path()` set it,
+  and `plots_as_content()` writes there. `plots_changes()` and `plots_changes_code()` turn
+  changes made to a stored collection back into code for the script that builds it.
 * Printing a plot that has a `canvas()` no longer fails where there is no viewer. It draws the
   ordinary way instead, so a ggview plot can appear in a knitted document. `save_ggplot()` still
   uses the canvas.
