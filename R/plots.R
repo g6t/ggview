@@ -28,8 +28,8 @@
 #'   A collection is read back in other sessions, so what it carries must not
 #'   depend on this one. `plots_init()` refuses a customizer or function that
 #'   uses a name from the session, or an unqualified function from an attached
-#'   package other than base R, ggplot2 and ggview: write `stringr::str_wrap()`,
-#'   not `str_wrap()`.
+#'   package other than base R, ggplot2, forcats and ggview: write
+#'   `stringr::str_wrap()`, not `str_wrap()`. A reader attaches those four.
 #'
 #' @section Options:
 #'   `options(ggview.quiet = TRUE)` silences the one-line reports of
@@ -1144,9 +1144,8 @@ warn_plot_travel <- function(plot, name) {
     cli::cli_warn(c(
       "{.val {name}} carries functions that will not work where the collection is read:",
       stats::setNames(paste0(names(risks), ": ", risks), rep("x", length(risks))),
-      "i" = "Qualify each one, such as {.code stringr::str_wrap()} or
-             {.code forcats::fct_rev()} in {.fn aes}, or use {.pkg scales} helpers such as
-             {.code scales::label_wrap()}."
+      "i" = "Qualify each one, such as {.code stringr::str_wrap()}, or use {.pkg scales}
+             helpers such as {.code scales::label_wrap()}."
     ), call = NULL)
   }
   invisible(plot)

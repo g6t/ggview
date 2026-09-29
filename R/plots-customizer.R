@@ -86,9 +86,14 @@ print.plots_customizer <- function(x, ...) {
 #' @description Offers what any plot has, whatever it draws: its title,
 #'   subtitle, footnote and axis titles, the size of each of those, the size and
 #'   line wrapping of the axis text, the overall text size, where the legend sits
-#'   and which way it runs, whether the gridlines show, and a color for each
-#'   category the plot colors by. Each one defaults to what the plot already
+#'   and which way it runs, whether the gridlines show, a color for each
+#'   category the plot colors by, and a new name for each legend entry and each
+#'   category on a discrete axis. Each one defaults to what the plot already
 #'   carries, `NA` leaves it alone, and not mentioning it changes nothing.
+#'
+#'   A new name changes only the label: the category, its color and its place
+#'   stay. The names go on the scale, in place, so a wrapped axis wraps them
+#'   too. An axis with more than 60 categories offers none.
 #'
 #'   The overall text size scales every text size the theme sets in points by
 #'   the same ratio, so it works on a complete theme too. A specific size given
@@ -114,6 +119,8 @@ print.plots_customizer <- function(x, ...) {
 #' @export
 customizer_default <- function() {
   new_customizer(c(
+    # First, so the labels layer wraps the new names.
+    customizer(apply = customize_names, params = params_names)$layers,
     customizer(apply = customize_labels, params = params_labels)$layers,
     customizer(apply = customize_colors, params = params_colors)$layers
   ))
@@ -183,12 +190,16 @@ customize_labels <- function(plot,
 
 params_labels <- function(plot) {
   theme <- plot_theme(plot)
+  # A text the theme hides has no size to offer.
   size <- function(key) {
+    if (element_hidden(theme, size_elements[[key]])) return(NULL)
     param_number(size_labels[[key]], default = element_size(theme, size_elements[[key]]),
                  min = 4, max = 80, step = 1)
   }
+  axis_text <- setdiff(c("axis.text.x", "axis.text.y"),
+                       Filter(function(name) element_hidden(theme, name), c("axis.text.x", "axis.text.y")))
 
-  list(
+  params <- list(
     title            = label_param("Title", plot, "title"),
     title_size       = size("title_size"),
     subtitle         = label_param("Subtitle", plot, "subtitle", multiline = TRUE),
@@ -199,9 +210,10 @@ params_labels <- function(plot) {
     x_size           = size("x_size"),
     y                = label_param("Y axis title", plot, "y"),
     y_size           = size("y_size"),
-    axis_text_size   = param_number("Axis text size",
-                                    default = element_size(theme, "axis.text.x"),
-                                    min = 4, max = 80, step = 1),
+    axis_text_size   = if (length(axis_text)) {
+                         param_number("Axis text size", default = element_size(theme, axis_text[[1]]),
+                                      min = 4, max = 80, step = 1)
+                       },
     axis_text_wrap   = param_number("Axis text wrap (characters)",
                                     min = 5, max = 120, step = 1),
     text_size        = size("text_size"),
@@ -212,6 +224,7 @@ params_labels <- function(plot) {
     x_grid           = param_flag("X gridlines", default = grid_shown(theme, "x")),
     y_grid           = param_flag("Y gridlines", default = grid_shown(theme, "y"))
   )
+  params[!vapply(params, is.null, logical(1))]
 }
 
 # A label's text parameter. It runs over several lines when it has to: a
@@ -234,8 +247,10 @@ given <- function(value) !is.null(value) && !is.na(value)
 
 # Change one theme element's size without changing what kind of element it is.
 # A title drawn as a markdown textbox stays a textbox: ggplot2 refuses to merge
-# two kinds of element, so replacing it outright is an error.
+# two kinds of element, so replacing it outright is an error. An element the
+# theme hides stays hidden: it has no size, and a new one would draw it again.
 element_resize <- function(plot, name, size) {
+  if (element_hidden(plot_theme(plot), name)) return(plot)
   current <- plot$theme[[name]]
   element <- if (inherits(current, "element")) {
     current$size <- size
@@ -354,6 +369,12 @@ plot_theme <- function(plot) {
   tryCatch(ggplot2::complete_theme(plot$theme), error = function(e) NULL)
 }
 
+# Whether the theme hides an element, itself or through the one it inherits from.
+element_hidden <- function(theme, name) {
+  if (is.null(theme)) return(FALSE)
+  inherits(tryCatch(ggplot2::calc_element(name, theme), error = function(e) NULL), "element_blank")
+}
+
 element_size <- function(theme, name) {
   if (is.null(theme)) return(NULL)
   size <- tryCatch(ggplot2::calc_element(name, theme)$size, error = function(e) NULL)
@@ -363,6 +384,96 @@ element_size <- function(theme, name) {
 grid_shown <- function(theme, axis) {
   if (is.null(theme)) return(NULL)
   !is.null(visible_line(theme, paste0("panel.grid.major.", axis)))
+}
+
+# --- category names ------------------------------------------------------------
+
+# More categories than this on one axis is a list nobody edits one by one.
+max_named <- 60L
+
+build_quietly <- function(plot) suppressMessages(suppressWarnings(ggplot2::ggplot_build(plot)))
+
+# A new label for each legend entry and each category on a discrete axis, each
+# starting from what the plot shows now. An axis flipped by `coord_flip()` is
+# named for where it is drawn.
+params_names <- function(plot) {
+  built <- build_quietly(plot)
+  out <- list()
+  legend <- color_scales(plot, built)
+  if (length(legend)) {
+    main <- legend[[1]]
+    out$legend_labels <- param_mapping(
+      "Legend labels", keys = main$keys, to = "text",
+      default = as.list(stats::setNames(main$labels, main$keys))
+    )
+  }
+  flipped <- inherits(plot$coordinates, "CoordFlip")
+  for (aesthetic in c("x", "y")) {
+    axis <- axis_categories(built, aesthetic)
+    if (is.null(axis)) next
+    drawn <- if (flipped) setdiff(c("x", "y"), aesthetic) else aesthetic
+    out[[paste0(aesthetic, "_labels")]] <- param_mapping(
+      paste(toupper(drawn), "axis labels"), keys = axis$keys, to = "text",
+      default = as.list(stats::setNames(axis$labels, axis$keys))
+    )
+  }
+  out
+}
+
+customize_names <- function(plot, legend_labels = NULL, x_labels = NULL, y_labels = NULL) {
+  if (given_mapping(legend_labels)) {
+    wanted <- unlist(legend_labels)
+    scales <- color_scales(plot, build_quietly(plot))
+    for (aesthetic in names(scales)) {
+      scale <- scales[[aesthetic]]
+      keep <- intersect(names(wanted), scale$keys)
+      if (!length(keep)) next
+      labels <- stats::setNames(scale$labels, scale$keys)
+      labels[keep] <- wanted[keep]
+      plot <- suppressMessages(plot + relabeled_scale(plot, aesthetic, labels))
+    }
+  }
+  axes <- list(x = x_labels, y = y_labels)
+  for (aesthetic in names(axes)) {
+    if (given_mapping(axes[[aesthetic]])) {
+      plot <- suppressMessages(plot + relabeled_scale(plot, aesthetic, unlist(axes[[aesthetic]])))
+    }
+  }
+  plot
+}
+
+# A mapping someone set. `NA` leaves it alone, as it does every other setting.
+given_mapping <- function(value) {
+  !is.null(value) && !(length(value) == 1L && !is.list(value) && is.na(value))
+}
+
+# A discrete axis's categories and what the axis shows for each, from the built
+# plot, where the axis is trained.
+axis_categories <- function(built, aesthetic) {
+  panel <- if (aesthetic == "x") built$layout$panel_scales_x else built$layout$panel_scales_y
+  scale <- if (length(panel)) panel[[1]] else NULL
+  if (is.null(scale) || !isTRUE(scale$is_discrete())) return(NULL)
+  keys <- as.character(scale$get_limits())
+  keys <- keys[!is.na(keys)]
+  if (!length(keys) || length(keys) > max_named) return(NULL)
+  labels <- tryCatch(as.character(scale$get_labels(keys)), error = function(e) keys)
+  if (length(labels) != length(keys)) labels <- keys
+  list(keys = keys, labels = labels)
+}
+
+# The same scale with new labels, matched to its categories by name, so its
+# colors, breaks and guide stay. A plot with no scale of its own gets the default
+# discrete one, which is what it was drawing with.
+relabeled_scale <- function(plot, aesthetic, labels) {
+  own <- plot$scales$get_scales(aesthetic)
+  if (is.null(own)) {
+    build <- switch(aesthetic, x = ggplot2::scale_x_discrete, y = ggplot2::scale_y_discrete,
+                    fill = ggplot2::scale_fill_discrete, colour = ggplot2::scale_colour_discrete)
+    return(build(labels = labels))
+  }
+  scale <- own$clone()
+  scale$labels <- labels
+  scale
 }
 
 # --- colors ------------------------------------------------------------------
@@ -400,8 +511,7 @@ customize_colors <- function(plot, colors = NULL) {
 
 # The plot's discrete color scales with at least one category, fill first: for
 # each, its categories, the hex color each has now, and what the legend calls it.
-color_scales <- function(plot) {
-  built <- suppressMessages(suppressWarnings(ggplot2::ggplot_build(plot)))
+color_scales <- function(plot, built = build_quietly(plot)) {
   out <- list()
   for (aesthetic in c("fill", "colour")) {
     scale <- built$plot$scales$get_scales(aesthetic)
@@ -716,9 +826,10 @@ check_travels <- function(fun, what, known = character(), call = parent.frame())
 }
 
 # Packages a reader is sure to have attached, so their functions may go
-# unqualified.
+# unqualified. forcats is among them: its factor helpers sit in plot mappings
+# everywhere, such as `aes(y = fct_rev(brand))`.
 travel_safe <- c("base", "stats", "utils", "graphics", "grDevices", "methods", "datasets",
-                 "ggplot2", "ggview")
+                 "ggplot2", "forcats", "ggview")
 
 # The names a function uses that another session will not have: those bound in
 # this session, and those found only in an attached package a reader may not
@@ -737,8 +848,8 @@ travel_risks <- function(fun, known = character()) {
 }
 
 # The functions a mapping calls that a reader will not have, as travel_risks() names them. A
-# mapping is evaluated where the plot is drawn, so `aes(y = fct_rev(brand))` needs forcats
-# there. Only calls count: the other names in a mapping are data columns.
+# mapping is evaluated where the plot is drawn, so `aes(y = str_wrap(brand, 20))` needs
+# stringr there. Only calls count: the other names in a mapping are data columns.
 mapping_risks <- function(quo) {
   env <- rlang::quo_get_env(quo)
   fun <- rlang::new_function(list(), rlang::quo_get_expr(quo), env)

@@ -1062,3 +1062,71 @@ test_that("a plot whose aes() calls an unqualified package function is added wit
     ggplot2::geom_bar(ggplot2::aes(y = ggplot2::after_stat(count)), stat = "count")
   expect_no_warning(quietly(plots_append(plots_init(), fine, name = "a", show = FALSE)))
 })
+
+test_that("a text the theme hides offers no size, and resizing leaves it hidden", {
+  hidden <- titled + ggplot2::labs(y = "Mileage") +
+    ggplot2::theme(axis.title.y = ggplot2::element_blank(), plot.caption = ggplot2::element_blank(),
+                   axis.text.x = ggplot2::element_blank())
+  plots <- quietly(plots_append(plots_init(), hidden, name = "h", show = FALSE))
+  keys <- names(plots_params(plots, "h"))
+  expect_false(any(c("y_size", "caption_size") %in% keys))
+  expect_true(all(c("x_size", "title_size", "axis_text_size", "text_size") %in% keys))
+
+  # The overall size and the axis text size work, and the hidden texts stay hidden.
+  plots <- plots_set(plots, "h", text_size = 16, axis_text_size = 12, title_size = 20, show = FALSE)
+  got <- plots_pull(plots, 1)
+  expect_s3_class(got, "ggplot")
+  theme <- ggplot2::complete_theme(got$theme)
+  expect_s3_class(ggplot2::calc_element("axis.title.y", theme), "element_blank")
+  expect_s3_class(ggplot2::calc_element("axis.text.x", theme), "element_blank")
+  expect_equal(ggplot2::calc_element("axis.text.y", theme)$size, 12)
+  expect_no_error(ggplot2::ggplot_build(got))
+  expect_error(plots_set(plots, "h", caption_size = 9, show = FALSE), "no parameter")
+})
+
+test_that("forcats travels: a reader attaches it, so fct_rev() in aes() is fine", {
+  skip_if_not_installed("forcats")
+  withr::local_package("forcats")
+  reversed <- ggplot2::ggplot(mtcars, ggplot2::aes(wt, fct_rev(factor(cyl)))) + ggplot2::geom_point()
+  expect_no_warning(quietly(plots_append(plots_init(), reversed, name = "a", show = FALSE)))
+})
+
+test_that("legend entries and axis categories take new names, and keep the rest", {
+  bars <- ggplot2::ggplot(mtcars, ggplot2::aes(factor(cyl), fill = factor(gear))) +
+    ggplot2::geom_bar() +
+    ggplot2::scale_fill_manual(values = c("3" = "red", "4" = "blue", "5" = "green"))
+  plots <- quietly(plots_append(plots_init(), bars, name = "b", show = FALSE))
+  params <- plots_params(plots, "b")
+  expect_equal(params$legend_labels$keys, c("3", "4", "5"))
+  expect_equal(params$legend_labels$to, "text")
+  expect_equal(params$x_labels$default, list("4" = "4", "6" = "6", "8" = "8"))
+  expect_equal(params$x_labels$label, "X axis labels")
+  expect_null(params$y_labels)   # a count axis is continuous
+
+  plots <- plots_set(plots, "b", legend_labels = c("4" = "Four gears"),
+                     x_labels = c("8" = "Eight cylinders"), colors = c("3" = "#36c8ef"),
+                     axis_text_wrap = 6, show = FALSE)
+  built <- ggplot2::ggplot_build(plots_pull(plots, 1))
+  fill <- built$plot$scales$get_scales("fill")
+  expect_equal(as.character(fill$get_labels()), c("3", "Four gears", "5"))
+  expect_equal(toupper(unname(fill$map(c("3", "4")))), c("#36C8EF", "#0000FF"))
+  # The new axis name is wrapped like the others.
+  expect_equal(as.character(built$layout$panel_scales_x[[1]]$get_labels()),
+               c("4", "6", "Eight\ncylinders"))
+
+  # Flipped, the category axis is drawn as the y axis and named so.
+  flipped <- quietly(plots_append(plots_init(), bars + ggplot2::coord_flip(), name = "f",
+                                  show = FALSE))
+  expect_equal(plots_params(flipped, "f")$x_labels$label, "Y axis labels")
+
+  # A plot with no legend and no discrete axis offers neither.
+  dots <- quietly(plots_append(plots_init(), p, name = "d", show = FALSE))
+  expect_false(any(c("legend_labels", "x_labels", "y_labels") %in% names(plots_params(dots, "d"))))
+
+  # A plot without a fill scale of its own gets the default one, with the new names.
+  plain <- ggplot2::ggplot(mtcars, ggplot2::aes(factor(cyl), fill = factor(am))) + ggplot2::geom_bar()
+  plain <- quietly(plots_append(plots_init(), plain, name = "p", show = FALSE))
+  plain <- plots_set(plain, "p", legend_labels = c("0" = "Automatic", "1" = "Manual"), show = FALSE)
+  plain_fill <- ggplot2::ggplot_build(plots_pull(plain, 1))$plot$scales$get_scales("fill")
+  expect_equal(as.character(plain_fill$get_labels()), c("Automatic", "Manual"))
+})

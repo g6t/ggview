@@ -13,9 +13,14 @@ A customizer.
 Offers what any plot has, whatever it draws: its title,
 subtitle, footnote and axis titles, the size of each of those, the size and
 line wrapping of the axis text, the overall text size, where the legend sits
-and which way it runs, whether the gridlines show, and a color for each
-category the plot colors by. Each one defaults to what the plot already
+and which way it runs, whether the gridlines show, a color for each
+category the plot colors by, and a new name for each legend entry and each
+category on a discrete axis. Each one defaults to what the plot already
 carries, \code{NA} leaves it alone, and not mentioning it changes nothing.
+
+A new name changes only the label: the category, its color and its place
+stay. The names go on the scale, in place, so a wrapped axis wraps them
+too. An axis with more than 60 categories offers none.
 
 The overall text size scales every text size the theme sets in points by
 the same ratio, so it works on a complete theme too. A specific size given

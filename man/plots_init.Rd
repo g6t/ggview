@@ -63,8 +63,8 @@ and \code{\link[=plots_get]{plots_get()}} puts it back.
 A collection is read back in other sessions, so what it carries must not
 depend on this one. \code{plots_init()} refuses a customizer or function that
 uses a name from the session, or an unqualified function from an attached
-package other than base R, ggplot2 and ggview: write \code{stringr::str_wrap()},
-not \code{str_wrap()}.
+package other than base R, ggplot2, forcats and ggview: write
+\code{stringr::str_wrap()}, not \code{str_wrap()}. A reader attaches those four.
 }
 \section{Options}{
 
