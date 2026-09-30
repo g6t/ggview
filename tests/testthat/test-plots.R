@@ -1130,3 +1130,63 @@ test_that("legend entries and axis categories take new names, and keep the rest"
   plain_fill <- ggplot2::ggplot_build(plots_pull(plain, 1))$plot$scales$get_scales("fill")
   expect_equal(as.character(plain_fill$get_labels()), c("Automatic", "Manual"))
 })
+
+test_that("an empty category is offered for neither a color nor a name", {
+  one_bar <- ggplot2::ggplot(mtcars, ggplot2::aes("", fill = factor(gear))) + ggplot2::geom_bar()
+  plots <- quietly(plots_append(plots_init(), one_bar, name = "o", show = FALSE))
+  params <- plots_params(plots, "o")
+  expect_null(params$x_labels)
+  expect_equal(params$legend_labels$keys, c("3", "4", "5"))
+
+  blank_level <- data.frame(g = c("", "a", "b"), n = 1:3)
+  filled <- ggplot2::ggplot(blank_level, ggplot2::aes(g, n, fill = g)) + ggplot2::geom_col()
+  plots <- quietly(plots_append(plots_init(), filled, name = "f", show = FALSE))
+  params <- plots_params(plots, "f")
+  expect_equal(params$colors$keys, c("a", "b"))
+  expect_equal(params$x_labels$keys, c("a", "b"))
+  expect_s3_class(plots_pull(plots_set(plots, "f", colors = c(a = "#36c8ef"), show = FALSE), 1),
+                  "ggplot")
+})
+
+test_that("the numbers on a plot take a size, and grow with the overall text size", {
+  counted <- ggplot2::ggplot(mtcars, ggplot2::aes(factor(cyl))) + ggplot2::geom_bar() +
+    ggplot2::geom_text(ggplot2::aes(label = ggplot2::after_stat(count)), stat = "count", size = 4) +
+    ggplot2::geom_label(ggplot2::aes(label = ggplot2::after_stat(count)), stat = "count",
+                        size = 10, size.unit = "pt")
+  plots <- quietly(plots_append(plots_init(), counted, name = "c", show = FALSE))
+  param <- plots_params(plots, "c")$data_label_size
+  expect_equal(param$default, round(4 * 72.27 / 25.4 * 2) / 2)
+  sizes <- function(plots) {
+    built <- ggplot2::ggplot_build(plots_pull(plots, 1))
+    c(unique(built$data[[2]]$size), unique(built$data[[3]]$size))
+  }
+
+  # Points, whatever unit each layer draws in.
+  set <- plots_set(plots, "c", data_label_size = 16, show = FALSE)
+  expect_equal(sizes(set), c(16 / (72.27 / 25.4), 16))
+
+  # The overall size scales them by its own ratio, and a specific size still wins.
+  base_text <- ggplot2::calc_element("text", ggplot2::complete_theme(plots_pull(plots, 1)$theme))$size
+  doubled <- plots_set(plots, "c", text_size = base_text * 2, show = FALSE)
+  expect_equal(sizes(doubled), c(8, 20))
+  both <- plots_set(plots, "c", text_size = base_text * 2, data_label_size = 12, show = FALSE)
+  expect_equal(sizes(both), c(12 / (72.27 / 25.4), 12))
+
+  # The stored plot keeps its own sizes.
+  expect_equal(sizes(plots), c(4, 10))
+
+  # A layer that maps size to the data is left alone, and a plot without text offers nothing.
+  mapped <- ggplot2::ggplot(mtcars, ggplot2::aes(wt, mpg, label = cyl, size = cyl)) +
+    ggplot2::geom_text()
+  mapped <- quietly(plots_append(plots_init(), mapped, name = "m", show = FALSE))
+  expect_null(plots_params(mapped, "m")$data_label_size)
+  expect_null(plots_params(quietly(plots_append(plots_init(), p, name = "p", show = FALSE)),
+                           "p")$data_label_size)
+})
+
+test_that("the canvas goes up to 30 inches a side", {
+  plots <- quietly(plots_append(plots_init(), p, name = "a", show = FALSE))
+  expect_equal(plots_params(plots, "a")$width$max, 30)
+  expect_no_error(plots_set(plots, "a", width = 30, height = 30, show = FALSE))
+  expect_error(plots_set(plots, "a", width = 31, show = FALSE), "30")
+})

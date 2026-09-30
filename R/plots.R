@@ -887,8 +887,9 @@ canvas_inches <- function(canvas) {
 # script declared is the default, and anything set later is a change on top of it.
 geometry_params <- function(width, height) {
   list(
-    width  = param_number("Width (in)", default = width, min = 1, max = 60, step = 0.5),
-    height = param_number("Height (in)", default = height, min = 1, max = 60, step = 0.5)
+    # 30 inches is already a large slide. ggplot2 refuses to save past 50.
+    width  = param_number("Width (in)", default = width, min = 1, max = 30, step = 0.5),
+    height = param_number("Height (in)", default = height, min = 1, max = 30, step = 0.5)
   )
 }
 

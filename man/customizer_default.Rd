@@ -23,8 +23,10 @@ stay. The names go on the scale, in place, so a wrapped axis wraps them
 too. An axis with more than 60 categories offers none.
 
 The overall text size scales every text size the theme sets in points by
-the same ratio, so it works on a complete theme too. A specific size given
-with it wins. Showing a grid brings back its major lines only, drawn like
+the same ratio, so it works on a complete theme too, and the text the plot
+draws in its panel, such as the numbers on bars, with it. A specific size
+given with it wins: \code{data_label_size} sets that panel text in points. A
+layer that maps its size to the data keeps its own sizes. Showing a grid brings back its major lines only, drawn like
 the plot's other gridlines when it shows some.
 
 The colors come from the plot's discrete fill scale, or its colour scale

@@ -96,8 +96,10 @@ print.plots_customizer <- function(x, ...) {
 #'   too. An axis with more than 60 categories offers none.
 #'
 #'   The overall text size scales every text size the theme sets in points by
-#'   the same ratio, so it works on a complete theme too. A specific size given
-#'   with it wins. Showing a grid brings back its major lines only, drawn like
+#'   the same ratio, so it works on a complete theme too, and the text the plot
+#'   draws in its panel, such as the numbers on bars, with it. A specific size
+#'   given with it wins: `data_label_size` sets that panel text in points. A
+#'   layer that maps its size to the data keeps its own sizes. Showing a grid brings back its major lines only, drawn like
 #'   the plot's other gridlines when it shows some.
 #'
 #'   The colors come from the plot's discrete fill scale, or its colour scale
@@ -143,7 +145,7 @@ customize_labels <- function(plot,
                              x = NULL, x_size = NULL,
                              y = NULL, y_size = NULL,
                              axis_text_size = NULL, axis_text_wrap = NULL,
-                             text_size = NULL,
+                             text_size = NULL, data_label_size = NULL,
                              legend = NULL, legend_direction = NULL,
                              x_grid = NULL, y_grid = NULL) {
   labels <- list(title = title, subtitle = subtitle, caption = caption, x = x, y = y)
@@ -161,6 +163,7 @@ customize_labels <- function(plot,
   for (key in names(sizes)) {
     if (given(sizes[[key]])) plot <- element_resize(plot, size_elements[[key]], sizes[[key]])
   }
+  if (given(data_label_size)) plot <- resize_labels(plot, label_layers(plot), data_label_size)
 
   # A theme that sets both axis texts makes the parent element a no-op, so set both.
   if (given(axis_text_size)) {
@@ -217,6 +220,13 @@ params_labels <- function(plot) {
     axis_text_wrap   = param_number("Axis text wrap (characters)",
                                     min = 5, max = 120, step = 1),
     text_size        = size("text_size"),
+    data_label_size  = local({
+      layers <- label_layers(plot)
+      if (length(layers)) {
+        param_number("Data label size", default = round(layers[[1]]$points * 2) / 2,
+                     min = 2, max = 80, step = 0.5)
+      }
+    }),
     legend           = param_choice("Legend", choices = legend_positions,
                                     default = legend_position(plot)),
     legend_direction = param_choice("Legend direction", choices = legend_directions,
@@ -276,7 +286,50 @@ text_resize <- function(plot, size) {
   for (name in setdiff(names(plot$theme)[own], "text")) {
     plot <- element_resize(plot, name, plot$theme[[name]]$size * ratio)
   }
+  # The text drawn in the panel grows with the rest.
+  resize_labels(plot, label_layers(plot), function(points) points * ratio)
+}
+
+# The layers that write text in the panel, such as the numbers on bars, each with
+# the size it draws at now, in points. A layer that maps size to the data has no
+# one size to change, so it is left out.
+text_geoms <- c("GeomText", "GeomLabel", "GeomRichText", "GeomTextBox", "GeomTextRepel",
+                "GeomLabelRepel")
+
+points_per <- c(mm = 72.27 / 25.4, pt = 1, cm = 72.27 / 2.54, `in` = 72.27, pc = 12)
+
+label_layers <- function(plot, built = NULL) {
+  wanted <- which(vapply(plot$layers, function(l) any(class(l$geom) %in% text_geoms), logical(1)))
+  if (!length(wanted)) return(list())
+  built <- built %||% build_quietly(plot)
+  out <- list()
+  for (i in wanted) {
+    sizes <- unique(built$data[[i]]$size)
+    unit <- plot$layers[[i]]$geom_params$size.unit %||% "mm"
+    if (length(sizes) != 1L || !is.numeric(sizes) || is.na(sizes) || is.na(points_per[unit])) next
+    out[[length(out) + 1L]] <- list(index = i, unit = unit, points = sizes * points_per[[unit]])
+  }
+  out
+}
+
+# New sizes for those layers: a number of points, or a function of the points each
+# has now. A layer is a shared object, so each one is replaced by a child that
+# holds the new size, and the stored plot keeps its own.
+resize_labels <- function(plot, layers, points) {
+  for (l in layers) {
+    size <- if (is.function(points)) points(l$points) else points
+    plot$layers[[l$index]] <- resized_layer(plot$layers[[l$index]], size / points_per[[l$unit]])
+  }
   plot
+}
+
+# ggproto() keeps its parent as a promise, so the parent is forced here: in a loop it
+# would otherwise resolve to the last layer the loop saw.
+resized_layer <- function(layer, size) {
+  force(layer)
+  params <- layer$aes_params
+  params$size <- size
+  ggplot2::ggproto(NULL, layer, aes_params = params)
 }
 
 # Break a discrete axis's labels over several lines. A scale the plot sets itself
@@ -453,8 +506,9 @@ axis_categories <- function(built, aesthetic) {
   panel <- if (aesthetic == "x") built$layout$panel_scales_x else built$layout$panel_scales_y
   scale <- if (length(panel)) panel[[1]] else NULL
   if (is.null(scale) || !isTRUE(scale$is_discrete())) return(NULL)
+  # An empty category, such as the one bar of `aes(x = "")`, has nothing to rename.
   keys <- as.character(scale$get_limits())
-  keys <- keys[!is.na(keys)]
+  keys <- keys[!is.na(keys) & nzchar(keys)]
   if (!length(keys) || length(keys) > max_named) return(NULL)
   labels <- tryCatch(as.character(scale$get_labels(keys)), error = function(e) keys)
   if (length(labels) != length(keys)) labels <- keys
@@ -524,7 +578,9 @@ color_scales <- function(plot, built = build_quietly(plot)) {
     } else {
       scale$get_limits()
     }
+    # An empty category cannot be a key: nothing can name it.
     keys <- as.character(keys[!is.na(keys)])
+    keys <- keys[nzchar(keys)]
     if (!length(keys)) next
     values <- if (identity) keys else scale$map(keys)
     labels <- if (identity) keys else {
